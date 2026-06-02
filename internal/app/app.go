@@ -70,3 +70,5 @@ func (a *App) Start() error {
 	log.Println("服务器已成功关闭")
 	return nil
 }
+
+// TODO: 对象生命周期管理
