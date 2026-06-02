@@ -12,6 +12,7 @@ import (
 
 var RedisClient *redis.Client
 
+// InitRedis 初始化Redis连接
 func InitRedis(cfg config.RedisConfig) (*redis.Client, error) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:         cfg.Addr,

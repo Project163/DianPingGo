@@ -4,6 +4,7 @@ import (
 	"context"
 	"dianping/internal/config"
 	"dianping/internal/infra"
+	"dianping/internal/router"
 	"fmt"
 	"log"
 	"net/http"
@@ -16,6 +17,7 @@ type App struct {
 	cfg *config.Config
 }
 
+// NewApp 创建一个新的App实例，接受配置文件路径作为参数，返回App对象和错误
 func NewApp(configPath string) (*App, error) {
 	cfg, err := config.InitConfig(configPath)
 	if err != nil {
@@ -35,15 +37,13 @@ func NewApp(configPath string) (*App, error) {
 	return &App{cfg: cfg}, nil
 }
 
+// Start 启动HTTP服务器，监听指定端口，并处理系统中断信号以关闭服务器
 func (a *App) Start() error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("pong"))
-	})
+	r := router.NewRouter(a.cfg.Server.Mode)
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", a.cfg.Server.Port),
-		Handler: mux,
+		Handler: r,
 	}
 
 	go func() {

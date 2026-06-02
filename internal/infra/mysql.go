@@ -2,6 +2,7 @@ package infra
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/driver/mysql"
@@ -13,6 +14,7 @@ import (
 
 var DB *gorm.DB
 
+// InitMySQL 初始化MySQL数据库连接
 func InitMySQL(cfg config.MySqlConfig, serverMode string) (*gorm.DB, error) {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.DBName)
@@ -33,6 +35,8 @@ func InitMySQL(cfg config.MySqlConfig, serverMode string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("获取数据库连接失败：%w", err)
 	}
+
+	log.Printf("MySQL连接成功!")
 
 	sqlDB.SetMaxOpenConns(100)
 	sqlDB.SetMaxIdleConns(10)
