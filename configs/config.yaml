@@ -1,0 +1,15 @@
+server:
+  port: 8081
+  mode: "debug"
+
+mysql:
+  host: "127.0.0.1"
+  port: 3306
+  user: "m0uses"
+  password: "20031005"
+  dbname: "hmdp"
+
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
