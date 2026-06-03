@@ -9,7 +9,7 @@ type UserDTO struct {
 
 // LoginReq 登录请求参数
 type LoginReq struct {
-	Phone    string `json:"phone" binding:"required,len=11,mobile"`
+	Phone    string `json:"phone" binding:"required,len=11,zh_mobile"`
 	Password string `json:"password" binding:"required,min=6,max=20"`
 }
 
@@ -21,7 +21,7 @@ type LoginResp struct {
 
 // SendCodeReq 发送验证码请求参数
 type SendCodeReq struct {
-	Phone string `json:"phone" binding:"required,len=11,mobile"`
+	Phone string `json:"phone" binding:"required,len=11,zh_mobile"`
 }
 
 // SendCodeResp 发送验证码响应数据
@@ -31,13 +31,13 @@ type SendCodeResp struct {
 
 // CodeLoginReq 验证码登录请求参数
 type CodeLoginReq struct {
-	Phone string `json:"phone" binding:"required,len=11"`
+	Phone string `json:"phone" binding:"required,len=11,zh_mobile"`
 	Code  string `json:"code" binding:"required,len=6"`
 }
 
 // CreateUserReq 创建用户请求参数
 type CreateUserReq struct {
-	Phone    string `json:"phone" binding:"required,len=11,mobile"`
+	Phone    string `json:"phone" binding:"required,len=11,zh_mobile"`
 	Password string `json:"password" binding:"required,min=6,max=20"`
 	NickName string `json:"nickname" binding:"required,min=2,max=20"`
 }

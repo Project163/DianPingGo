@@ -38,15 +38,19 @@ func NewError(base CustomError, realErr error) *CustomError {
 
 // 预定义一些常用的错误类型，包含HTTP状态码、业务错误码和错误信息
 var (
+	// 通用错误
 	ErrInvalidParam    = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4001, Message: "请求参数错误"}
 	ErrNotFound        = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4002, Message: "资源不存在"}
-	ErrUnauthorized    = CustomError{HttpCode: http.StatusUnauthorized, BusinessCode: 4003, Message: "未授权访问"}
-	ErrInternalSec     = CustomError{HttpCode: http.StatusInternalServerError, BusinessCode: 5001, Message: "服务器内部错误"}
-	ErrTooManyRequests = CustomError{HttpCode: http.StatusTooManyRequests, BusinessCode: 4006, Message: "请求过于频繁，请稍后再试"}
+	ErrUnauthorized    = CustomError{HttpCode: http.StatusUnauthorized, BusinessCode: 4010, Message: "未登陆或登录已过期"}
+	ErrForbidden       = CustomError{HttpCode: http.StatusForbidden, BusinessCode: 4030, Message: "没有权限访问"}
+	ErrTooManyRequests = CustomError{HttpCode: http.StatusTooManyRequests, BusinessCode: 4290, Message: "请求过于频繁，请稍后再试"}
+	ErrInternalSec     = CustomError{HttpCode: http.StatusInternalServerError, BusinessCode: 5000, Message: "服务器内部错误"}
 
-	ErrUserNotFound      = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4004, Message: "用户不存在"}
-	ErrInvalidPassword   = CustomError{HttpCode: http.StatusUnauthorized, BusinessCode: 4005, Message: "密码错误"}
-	ErrCodeExpired       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4007, Message: "验证码已过期"}
-	ErrInvalidCode       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4008, Message: "验证码错误"}
-	ErrUserAlreadyExists = CustomError{HttpCode: http.StatusConflict, BusinessCode: 4009, Message: "用户已存在"}
+	// 用户模块错误
+	ErrUserNotFound      = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4101, Message: "用户不存在"}
+	ErrInvalidPhone      = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4102, Message: "手机号格式错误"}
+	ErrInvalidPassword   = CustomError{HttpCode: http.StatusUnauthorized, BusinessCode: 4103, Message: "密码错误"}
+	ErrCodeExpired       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4104, Message: "验证码已过期"}
+	ErrInvalidCode       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4105, Message: "验证码错误"}
+	ErrUserAlreadyExists = CustomError{HttpCode: http.StatusConflict, BusinessCode: 4106, Message: "用户已存在"}
 )

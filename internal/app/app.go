@@ -5,6 +5,7 @@ import (
 	"dianping/internal/config"
 	"dianping/internal/infra"
 	"dianping/internal/router"
+	"dianping/pkg/validator"
 	"fmt"
 	"log"
 	"net/http"
@@ -39,6 +40,8 @@ func NewApp(configPath string) (*App, error) {
 
 // Start 启动HTTP服务器，监听指定端口，并处理系统中断信号以关闭服务器
 func (a *App) Start() error {
+	validator.InitValidator()
+
 	r := router.NewRouter(a.cfg.Server.Mode)
 
 	server := &http.Server{

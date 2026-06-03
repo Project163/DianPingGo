@@ -1,6 +1,7 @@
 package router
 
 import (
+	"dianping/internal/middleware"
 	"dianping/internal/module/user"
 	"net/http"
 	"os"
@@ -31,6 +32,13 @@ func NewRouter(mode string) *gin.Engine {
 		api.POST("/login/password", userHandler.Login)
 		api.POST("/login/code", userHandler.CodeLogin)
 		api.POST("/code", userHandler.SendCode)
+
+		auth := api.Group("")
+		auth.Use(middleware.AuthMiddleware())
+		{
+
+		}
+
 	}
 
 	r.GET("/ping", func(ctx *gin.Context) {

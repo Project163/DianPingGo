@@ -38,7 +38,7 @@ func Fail(ctx *gin.Context, err error) {
 		if customErr.Err != nil {
 			fmt.Printf("business error: %v\n", customErr)
 		}
-		ctx.JSON(http.StatusOK, Response{
+		ctx.JSON(customErr.HttpCode, Response{
 			Success:      false,
 			BusinessCode: customErr.BusinessCode,
 			Message:      customErr.Message,
