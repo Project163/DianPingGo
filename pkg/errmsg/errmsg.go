@@ -53,4 +53,7 @@ var (
 	ErrCodeExpired       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4104, Message: "验证码已过期"}
 	ErrInvalidCode       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4105, Message: "验证码错误"}
 	ErrUserAlreadyExists = CustomError{HttpCode: http.StatusConflict, BusinessCode: 4106, Message: "用户已存在"}
+
+	// 商户模块错误
+	ErrShopNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4201, Message: "商户不存在"}
 )

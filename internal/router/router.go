@@ -2,6 +2,7 @@ package router
 
 import (
 	"dianping/internal/middleware"
+	"dianping/internal/module/shop"
 	"dianping/internal/module/user"
 	"net/http"
 	"os"
@@ -27,11 +28,19 @@ func NewRouter(mode string) *gin.Engine {
 	userSrv := user.NewService(userRepo, jwtSecret)
 	userHandler := user.NewHandler(userSrv)
 
+	shopRepo := shop.NewRepository()
+	shopSrv := shop.NewService(shopRepo)
+	shopHandler := shop.NewHandler(shopSrv)
+
 	api := r.Group("/api")
 	{
 		api.POST("/login/password", userHandler.Login)
 		api.POST("/login/code", userHandler.CodeLogin)
 		api.POST("/code", userHandler.SendCode)
+
+		api.GET("/shops/:id", shopHandler.GetShopByID)
+		api.PUT("/shops/:id", shopHandler.UpdateShop)
+		api.GET("/shops/type/:type_id", shopHandler.GetShopsByType)
 
 		auth := api.Group("")
 		auth.Use(middleware.AuthMiddleware())
