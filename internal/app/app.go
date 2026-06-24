@@ -42,7 +42,7 @@ func NewApp(configPath string) (*App, error) {
 func (a *App) Start() error {
 	validator.InitValidator()
 
-	r := router.NewRouter(a.cfg.Server.Mode)
+	r := router.NewRouter(a.cfg.Server.Mode, infra.DB, infra.RedisClient)
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", a.cfg.Server.Port),

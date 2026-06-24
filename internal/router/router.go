@@ -2,15 +2,20 @@ package router
 
 import (
 	"dianping/internal/middleware"
+	"dianping/internal/module/seckillvoucher"
 	"dianping/internal/module/shop"
 	"dianping/internal/module/user"
+	"dianping/internal/module/voucher"
+	"dianping/internal/module/voucherorder"
+	"dianping/pkg/idgen"
 	"net/http"
-	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
-func NewRouter(mode string) *gin.Engine {
+func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
 	if mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	} else {
@@ -19,18 +24,27 @@ func NewRouter(mode string) *gin.Engine {
 
 	r := gin.Default()
 
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		jwtSecret = "default_secret"
-	}
+	// jwtSecret := os.Getenv("JWT_SECRET")
+	// if jwtSecret == "" {
+	// 	jwtSecret = "default_secret"
+	// }
 
-	userRepo := user.NewRepository()
-	userSrv := user.NewService(userRepo, jwtSecret)
+	userRepo := user.NewRepository(db)
+	userSrv := user.NewService(userRepo, rdb)
 	userHandler := user.NewHandler(userSrv)
 
-	shopRepo := shop.NewRepository()
-	shopSrv := shop.NewService(shopRepo)
+	shopRepo := shop.NewRepository(db)
+	shopSrv := shop.NewService(shopRepo, rdb)
 	shopHandler := shop.NewHandler(shopSrv)
+
+	voucherRepo := voucher.NewRepository(db)
+	seckillVoucherRepo := seckillvoucher.NewRepository(db)
+	voucherSrv := voucher.NewService(voucherRepo, rdb)
+	voucherHandler := voucher.NewHandler(voucherSrv)
+	voucherOrderRepo := voucherorder.NewRepository(db)
+	voucherOrderSrv := voucherorder.NewService(voucherOrderRepo, seckillVoucherRepo, rdb, idgen.NewRedisIDWorker(rdb.(*redis.Client)))
+	voucherOrderSrv.Start()
+	voucherOrderHandler := voucherorder.NewHandler(voucherOrderSrv)
 
 	api := r.Group("/api")
 	{
@@ -42,10 +56,14 @@ func NewRouter(mode string) *gin.Engine {
 		api.PUT("/shops/:id", shopHandler.UpdateShop)
 		api.GET("/shops/type/:type_id", shopHandler.GetShopsByType)
 
-		auth := api.Group("")
-		auth.Use(middleware.AuthMiddleware())
-		{
+		api.POST("/voucher/normal", voucherHandler.CreateVoucher)
+		api.POST("/voucher/seckill", voucherHandler.CreateSeckillVoucher)
+		api.GET("/voucher/shop/:shopid", voucherHandler.GetVoucherByShopID)
 
+		auth := api.Group("")
+		auth.Use(middleware.AuthMiddleware(rdb))
+		{
+			auth.POST("/seckill/:voucherId", voucherOrderHandler.SeckillVoucher)
 		}
 
 	}

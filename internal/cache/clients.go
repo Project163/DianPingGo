@@ -2,7 +2,6 @@ package cache
 
 import (
 	"context"
-	"dianping/internal/infra"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,11 +18,11 @@ type RedisData struct {
 }
 
 type CacheClient struct {
-	rdb *redis.Client
+	rdb redis.Cmdable
 }
 
-func NewCacheClient() *CacheClient {
-	return &CacheClient{rdb: infra.RedisClient}
+func NewCacheClient(rdb redis.Cmdable) *CacheClient {
+	return &CacheClient{rdb: rdb}
 }
 
 func mutexKey(key string) string {

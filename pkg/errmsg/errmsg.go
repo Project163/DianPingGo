@@ -56,4 +56,7 @@ var (
 
 	// 商户模块错误
 	ErrShopNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4201, Message: "商户不存在"}
+
+	ErrNoStock       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4301, Message: "库存不足"}
+	ErrRepeatedOrder = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4302, Message: "请勿重复下单"}
 )

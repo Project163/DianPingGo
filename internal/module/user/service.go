@@ -3,7 +3,6 @@ package user
 import (
 	"context"
 	"crypto/rand"
-	"dianping/internal/infra"
 	"dianping/pkg/errmsg"
 	"encoding/hex"
 	"errors"
@@ -18,17 +17,22 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Service struct {
-	repo      *Repository
-	jwtSecret []byte
-	rdb       *redis.Client
+type UserRepository interface {
+	CreateUser(ctx context.Context, user *User) error
+	GetUserByPhone(ctx context.Context, phone string) (*User, error)
 }
 
-func NewService(repo *Repository, secret string) *Service {
+type Service struct {
+	repo UserRepository
+	// jwtSecret []byte
+	rdb redis.Cmdable
+}
+
+func NewService(repo UserRepository, rdb redis.Cmdable) *Service {
 	return &Service{
-		repo:      repo,
-		jwtSecret: []byte(secret),
-		rdb:       infra.RedisClient,
+		repo: repo,
+		// jwtSecret: []byte(secret),
+		rdb: rdb,
 	}
 }
 

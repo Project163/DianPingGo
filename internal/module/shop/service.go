@@ -8,17 +8,26 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+
+	"github.com/redis/go-redis/v9"
 )
 
+type ShopRepository interface {
+	GetShopByID(ctx context.Context, id uint64) (*Shop, error)
+	UpdateShop(ctx context.Context, shop *Shop) error
+	GetShopsByType(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error)
+	GetShopsByIDs(ctx context.Context, ids []uint64) ([]Shop, error)
+}
+
 type Service struct {
-	repo        *Repository
+	repo        ShopRepository
 	cacheClient *cache.CacheClient
 }
 
-func NewService(repo *Repository) *Service {
+func NewService(repo ShopRepository, rdb redis.Cmdable) *Service {
 	return &Service{
 		repo:        repo,
-		cacheClient: cache.NewCacheClient(),
+		cacheClient: cache.NewCacheClient(rdb),
 	}
 }
 

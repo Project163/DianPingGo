@@ -2,21 +2,24 @@ package shop
 
 import (
 	"context"
-	"dianping/internal/infra"
 	"errors"
 
 	"gorm.io/gorm"
 )
 
-type Repository struct{}
+type Repository struct {
+	db *gorm.DB
+}
 
-func NewRepository() *Repository {
-	return &Repository{}
+func NewRepository(db *gorm.DB) *Repository {
+	return &Repository{
+		db: db,
+	}
 }
 
 func (r *Repository) GetShopByID(ctx context.Context, id uint64) (*Shop, error) {
 	var shop Shop
-	err := infra.DB.WithContext(ctx).Where("id = ?", id).First(&shop).Error
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&shop).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -27,7 +30,7 @@ func (r *Repository) GetShopByID(ctx context.Context, id uint64) (*Shop, error) 
 }
 
 func (r *Repository) UpdateShop(ctx context.Context, shop *Shop) error {
-	err := infra.DB.WithContext(ctx).Save(shop).Error
+	err := r.db.WithContext(ctx).Save(shop).Error
 	if err != nil {
 		return err
 	}
@@ -36,7 +39,7 @@ func (r *Repository) UpdateShop(ctx context.Context, shop *Shop) error {
 
 func (r *Repository) GetShopsByType(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error) {
 	var shops []Shop
-	err := infra.DB.WithContext(ctx).
+	err := r.db.WithContext(ctx).
 		Where("type_id = ?", typeID).
 		Offset(offset).
 		Limit(limit).
@@ -47,7 +50,7 @@ func (r *Repository) GetShopsByType(ctx context.Context, typeID uint64, offset, 
 
 func (r *Repository) GetShopsByIDs(ctx context.Context, ids []uint64) ([]Shop, error) {
 	var shops []Shop
-	err := infra.DB.WithContext(ctx).
+	err := r.db.WithContext(ctx).
 		Where("id IN ?", ids).
 		Find(&shops).Error
 
