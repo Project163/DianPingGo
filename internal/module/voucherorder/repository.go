@@ -30,3 +30,15 @@ func (r *Repository) CountByUserAndVoucher(ctx context.Context, userID uint64, v
 	}
 	return count, nil
 }
+
+func (r *Repository) GetVoucherOrderByID(ctx context.Context, orderID uint64) (*VoucherOrder, error) {
+	var order VoucherOrder
+	err := r.db.WithContext(ctx).Where("id = ?", orderID).First(&order).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &order, nil
+}

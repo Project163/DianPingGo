@@ -21,6 +21,7 @@ import (
 type mockVoucherOrderRepo struct {
 	CreateVoucherOrderFunc    func(ctx context.Context, order *VoucherOrder) error
 	CountByUserAndVoucherFunc func(ctx context.Context, userID, voucherID uint64) (int64, error)
+	GetVoucherOrderByIDFunc   func(ctx context.Context, orderID uint64) (*VoucherOrder, error)
 }
 
 func (m *mockVoucherOrderRepo) CreateVoucherOrder(ctx context.Context, order *VoucherOrder) error {
@@ -35,6 +36,13 @@ func (m *mockVoucherOrderRepo) CountByUserAndVoucher(ctx context.Context, userID
 		return m.CountByUserAndVoucherFunc(ctx, userID, voucherID)
 	}
 	return 0, nil
+}
+
+func (m *mockVoucherOrderRepo) GetVoucherOrderByID(ctx context.Context, orderID uint64) (*VoucherOrder, error) {
+	if m.GetVoucherOrderByIDFunc != nil {
+		return m.GetVoucherOrderByIDFunc(ctx, orderID)
+	}
+	return nil, nil
 }
 
 type mockSeckillVoucherRepo struct {

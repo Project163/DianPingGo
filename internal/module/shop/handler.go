@@ -16,6 +16,31 @@ func NewHandler(srv *Service) *Handler {
 	return &Handler{srv: srv}
 }
 
+func (h *Handler) CreateShop(ctx *gin.Context) {
+	var req CreateShopReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))
+		return
+	}
+
+	shop := &Shop{
+		Name:     req.Name,
+		TypeID:   req.TypeID,
+		Images:   req.Images,
+		Area:     req.Area,
+		Address:  req.Address,
+		OpenTime: req.OpenTime,
+	}
+
+	err := h.srv.CreateShop(ctx.Request.Context(), shop)
+	if err != nil {
+		response.Fail(ctx, err)
+		return
+	}
+
+	response.OK(ctx, shop)
+}
+
 // GetShopByID 获取商户信息
 func (h *Handler) GetShopByID(ctx *gin.Context) {
 	idStr := ctx.Param("id")
@@ -85,6 +110,29 @@ func (h *Handler) GetShopsByType(ctx *gin.Context) {
 	}
 
 	shops, err := h.srv.GetShopsByType(ctx.Request.Context(), typeID, current, x, y)
+	if err != nil {
+		response.Fail(ctx, err)
+		return
+	}
+
+	response.OK(ctx, shops)
+}
+
+func (h *Handler) GetShopsByName(ctx *gin.Context) {
+	name := ctx.Query("name")
+	if name == "" {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, nil))
+		return
+	}
+
+	currentStr := ctx.DefaultQuery("current", "1")
+	current, err := strconv.Atoi(currentStr)
+	if err != nil || current < 1 {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))
+		return
+	}
+
+	shops, err := h.srv.GetShopsByName(ctx.Request.Context(), name, current)
 	if err != nil {
 		response.Fail(ctx, err)
 		return

@@ -16,6 +16,7 @@ import (
 type VoucherOrderRepository interface {
 	CreateVoucherOrder(ctx context.Context, order *VoucherOrder) error
 	CountByUserAndVoucher(ctx context.Context, userID uint64, voucherID uint64) (int64, error)
+	GetVoucherOrderByID(ctx context.Context, orderID uint64) (*VoucherOrder, error)
 }
 
 type SeckillVoucherRepository interface {
@@ -132,6 +133,17 @@ func (s *Service) CreateVoucherOrder(ctx context.Context, order *VoucherOrder) e
 		return &errmsg.ErrNoStock
 	}
 	return s.repo.CreateVoucherOrder(ctx, order)
+}
+
+func (s *Service) GetVoucherOrderByID(ctx context.Context, orderID uint64) (*VoucherOrder, error) {
+	order, err := s.repo.GetVoucherOrderByID(ctx, orderID)
+	if order == nil {
+		return nil, &errmsg.ErrOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return order, nil
 }
 
 func (s *Service) HandleVoucherOrder(ctx context.Context, order *VoucherOrder) error {

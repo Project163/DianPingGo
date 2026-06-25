@@ -59,4 +59,5 @@ var (
 
 	ErrNoStock       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4301, Message: "库存不足"}
 	ErrRepeatedOrder = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4302, Message: "请勿重复下单"}
+	ErrOrderNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4303, Message: "订单不存在"}
 )

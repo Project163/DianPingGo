@@ -17,6 +17,10 @@ func NewRepository(db *gorm.DB) *Repository {
 	}
 }
 
+func (r *Repository) CreateShop(ctx context.Context, shop *Shop) error {
+	return r.db.WithContext(ctx).Create(shop).Error
+}
+
 func (r *Repository) GetShopByID(ctx context.Context, id uint64) (*Shop, error) {
 	var shop Shop
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&shop).Error
@@ -52,6 +56,17 @@ func (r *Repository) GetShopsByIDs(ctx context.Context, ids []uint64) ([]Shop, e
 	var shops []Shop
 	err := r.db.WithContext(ctx).
 		Where("id IN ?", ids).
+		Find(&shops).Error
+
+	return shops, err
+}
+
+func (r *Repository) GetShopsByName(ctx context.Context, name string, offset, limit int) ([]Shop, error) {
+	var shops []Shop
+	err := r.db.WithContext(ctx).
+		Where("name LIKE ?", "%"+name+"%").
+		Offset(offset).
+		Limit(limit).
 		Find(&shops).Error
 
 	return shops, err

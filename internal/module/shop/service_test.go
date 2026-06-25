@@ -14,10 +14,12 @@ import (
 )
 
 type mockShopRepo struct {
-	getShopByIDFunc   func(ctx context.Context, id uint64) (*Shop, error)
-	updateShopFunc    func(ctx context.Context, shop *Shop) error
+	getShopByIDFunc    func(ctx context.Context, id uint64) (*Shop, error)
+	updateShopFunc     func(ctx context.Context, shop *Shop) error
 	getShopsByTypeFunc func(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error)
 	getShopsByIDsFunc  func(ctx context.Context, ids []uint64) ([]Shop, error)
+	getShopsByNameFunc func(ctx context.Context, name string, offset, limit int) ([]Shop, error)
+	CreateShopFunc     func(ctx context.Context, shop *Shop) error
 }
 
 func (m *mockShopRepo) GetShopByID(ctx context.Context, id uint64) (*Shop, error) {
@@ -48,6 +50,20 @@ func (m *mockShopRepo) GetShopsByIDs(ctx context.Context, ids []uint64) ([]Shop,
 	return nil, nil
 }
 
+func (m *mockShopRepo) GetShopsByName(ctx context.Context, name string, offset, limit int) ([]Shop, error) {
+	if m.getShopsByNameFunc != nil {
+		return m.getShopsByNameFunc(ctx, name, offset, limit)
+	}
+	return nil, nil
+}
+
+func (m *mockShopRepo) CreateShop(ctx context.Context, shop *Shop) error {
+	if m.CreateShopFunc != nil {
+		return m.CreateShopFunc(ctx, shop)
+	}
+	return nil
+}
+
 func setupService(t *testing.T) (*Service, *mockShopRepo, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
@@ -55,6 +71,30 @@ func setupService(t *testing.T) (*Service, *mockShopRepo, *miniredis.Miniredis) 
 	repo := new(mockShopRepo)
 	svc := NewService(repo, rdb)
 	return svc, repo, mr
+}
+
+func TestCreateShop_Service(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		srv, repo, _ := setupService(t)
+		repo.CreateShopFunc = func(ctx context.Context, shop *Shop) error {
+			require.Equal(t, "New Shop", shop.Name)
+			return nil
+		}
+
+		err := srv.CreateShop(context.Background(), &Shop{Name: "New Shop"})
+		require.NoError(t, err)
+	})
+
+	t.Run("repository error", func(t *testing.T) {
+		srv, repo, _ := setupService(t)
+		repo.CreateShopFunc = func(ctx context.Context, shop *Shop) error {
+			return fmt.Errorf("db error")
+		}
+
+		err := srv.CreateShop(context.Background(), &Shop{Name: "Fail Shop"})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "db error")
+	})
 }
 
 func TestGetShopByID_Service(t *testing.T) {

@@ -13,10 +13,12 @@ import (
 )
 
 type ShopRepository interface {
+	CreateShop(ctx context.Context, shop *Shop) error
 	GetShopByID(ctx context.Context, id uint64) (*Shop, error)
 	UpdateShop(ctx context.Context, shop *Shop) error
 	GetShopsByType(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error)
 	GetShopsByIDs(ctx context.Context, ids []uint64) ([]Shop, error)
+	GetShopsByName(ctx context.Context, name string, offset, limit int) ([]Shop, error)
 }
 
 type Service struct {
@@ -29,6 +31,15 @@ func NewService(repo ShopRepository, rdb redis.Cmdable) *Service {
 		repo:        repo,
 		cacheClient: cache.NewCacheClient(rdb),
 	}
+}
+
+// CreateShop 创建商户
+func (s *Service) CreateShop(ctx context.Context, shop *Shop) error {
+	err := s.repo.CreateShop(ctx, shop)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // GetShopByID 获取商户信息，先查缓存，缓存未命中查数据库并写入缓存（缓存空值）
@@ -172,6 +183,16 @@ func (s *Service) GetShopsByType(ctx context.Context, typeID uint64, current int
 		resp[i] = *r
 	}
 	return resp, nil
+}
+
+// GetShopsByName 根据商户名称模糊分页查询商户列表
+func (s *Service) GetShopsByName(ctx context.Context, name string, current int) ([]QueryShopResp, error) {
+	offset := (current - 1) * MaxPageSize
+	shops, err := s.repo.GetShopsByName(ctx, name, offset, MaxPageSize)
+	if err != nil {
+		return nil, err
+	}
+	return batchShopToResponse(shops), nil
 }
 
 func batchShopToResponse(shops []Shop) []QueryShopResp {

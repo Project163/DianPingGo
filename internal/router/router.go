@@ -55,6 +55,8 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
 		api.GET("/shops/:id", shopHandler.GetShopByID)
 		api.PUT("/shops/:id", shopHandler.UpdateShop)
 		api.GET("/shops/type/:type_id", shopHandler.GetShopsByType)
+		api.GET("/shops/name/:name", shopHandler.GetShopsByName)
+		api.POST("/shops", shopHandler.CreateShop)
 
 		api.POST("/voucher/normal", voucherHandler.CreateVoucher)
 		api.POST("/voucher/seckill", voucherHandler.CreateSeckillVoucher)

@@ -1,5 +1,14 @@
 package shop
 
+type CreateShopReq struct {
+	Name     string `json:"name" binding:"required"`
+	TypeID   uint64 `json:"typeId" binding:"required"`
+	Images   string `json:"images"`
+	Area     string `json:"area" binding:"required"`
+	Address  string `json:"address" binding:"required"`
+	OpenTime string `json:"openTime" binding:"required"`
+}
+
 type QueryShopReq struct {
 	ID uint64 `json:"id" binding:"required,min=1"`
 }
