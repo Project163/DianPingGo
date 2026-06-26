@@ -17,11 +17,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// UserRepository 定义了用户仓库接口，包含创建用户和根据手机号查询用户的方法（便于测试）
 type UserRepository interface {
 	CreateUser(ctx context.Context, user *User) error
 	GetUserByPhone(ctx context.Context, phone string) (*User, error)
 }
 
+// Service 定义了用户服务接口，包含登录、验证码登录、发送验证码和注册新用户的方法
 type Service struct {
 	repo UserRepository
 	// jwtSecret []byte
@@ -36,6 +38,7 @@ func NewService(repo UserRepository, rdb redis.Cmdable) *Service {
 	}
 }
 
+// Login 使用密码登录，返回token和昵称
 func (s *Service) Login(ctx context.Context, req *LoginReq) (*LoginResp, error) {
 	phone := req.Phone
 	// 根据手机号查询用户
@@ -48,12 +51,18 @@ func (s *Service) Login(ctx context.Context, req *LoginReq) (*LoginResp, error) 
 		return nil, &errmsg.ErrUserNotFound
 	}
 
+	// TODO: 多次密码错误限制，防止暴力破解
 	// 密码学比较用户输入的密码和数据库中存储的哈希密码
 	err = bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(req.Password))
 	if err != nil {
 		return nil, &errmsg.ErrInvalidPassword
 	}
 
+	// 为什么放弃了jwt？
+	// 因为jwt的token是可以被伪造的，虽然可以通过签名来验证，但是如果密钥泄露了，就会有安全问题。
+	// 并且如果一个jwt token被盗了，由于jwt是无状态的，无法在服务端直接注销这个token，只能继续使用，直到过期。
+	// 使用uuid生成的token，可以存储在Redis中，设置过期时间，这样就可以实现单点登录，而且可以随时注销用户的登录状态。
+	// uuid无非是无状态的，即每次服务都会查一次缓存，但对于目前的体量仍然是可以接受的，且可以随时注销用户的登录状态。
 	// claims := jwt.MapClaims{
 	// 	"userId": u.ID,
 	// 	"exp":    time.Now().Add(24 * time.Hour).Unix(),
@@ -78,7 +87,7 @@ func (s *Service) Login(ctx context.Context, req *LoginReq) (*LoginResp, error) 
 		"nickname": userDTO.NickName,
 		"icon":     userDTO.Icon,
 	}
-	// 使用事务管道一次执行HSet和Expire
+	// 使用管道一次执行HSet和Expire
 	tokenKey := BizUserToken + tokenStr
 	pipe := s.rdb.TxPipeline()
 
@@ -173,7 +182,8 @@ func (s *Service) CodeLogin(ctx context.Context, req *CodeLoginReq) (*LoginResp,
 // SendCode 发送验证码
 func (s *Service) SendCode(ctx context.Context, req *SendCodeReq) (*SendCodeResp, error) {
 	phone := req.Phone
-	// 通过设置分布式锁来限制同一手机号在短时间内重复发送验证码，锁的key为BizUserLockCode + phone，过期时间为1分钟
+	// 分布式锁来限制同一手机号在短时间内重复发送验证码
+	// 锁的key为BizUserLockCode + phone，过期时间为1分钟
 	lockKey := BizUserLockCode + phone
 	success, err := s.rdb.SetNX(ctx, lockKey, "1", BizUserLockTTL).Result()
 	if err != nil {

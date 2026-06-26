@@ -57,7 +57,13 @@ var (
 	// 商户模块错误
 	ErrShopNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4201, Message: "商户不存在"}
 
+	// 订单模块错误
 	ErrNoStock       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4301, Message: "库存不足"}
 	ErrRepeatedOrder = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4302, Message: "请勿重复下单"}
 	ErrOrderNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4303, Message: "订单不存在"}
+
+	// 文件上传模块错误
+	ErrFileTooLarge = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4401, Message: "文件过大"}
+	ErrFileType     = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4402, Message: "文件类型不支持"}
+	ErrFileUpload   = CustomError{HttpCode: http.StatusInternalServerError, BusinessCode: 4403, Message: "文件上传失败"}
 )

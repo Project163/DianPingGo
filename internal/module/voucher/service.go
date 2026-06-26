@@ -9,6 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// VoucherRepository 定义了优惠券仓库接口，包含创建优惠券、根据ID查询优惠券、根据商户ID查询优惠券列表和创建秒杀优惠券的方法
 type VoucherRepository interface {
 	CreateVoucher(ctx context.Context, voucher *Voucher) error
 	GetVoucherByID(ctx context.Context, id uint64) (*Voucher, error)
@@ -85,10 +86,12 @@ func (s *Service) CreateSeckillVoucher(ctx context.Context, req *CreateVoucherRe
 	return svoucher.ID, nil
 }
 
+// GetVoucherByID 根据优惠券ID查询优惠券
 func (s *Service) GetVoucherByShopID(ctx context.Context, shopID uint64) ([]VoucherResp, error) {
 	key := fmt.Sprintf("%s%d", CacheShopVoucherKey, shopID)
 	var vouchers []Voucher
 
+	// 使用缓存控制策略查询优惠券列表
 	err := s.cache.QueryWithPassThrough(ctx, key, &vouchers, CacheShopVoucherTTL, CacheNullTTL,
 		func() (any, error) {
 			return s.repo.GetByShopID(ctx, shopID)
@@ -103,6 +106,8 @@ func (s *Service) GetVoucherByShopID(ctx context.Context, shopID uint64) ([]Vouc
 	return toVoucherRespList(vouchers), nil
 }
 
+// toVoucherRespList 将 Voucher 切片转换为 VoucherResp 切片
+// 坚持不直接返回 Voucher 对象，而是返回 VoucherResp 对象，以便在响应中隐藏不必要的字段
 func toVoucherRespList(vouchers []Voucher) []VoucherResp {
 	respList := make([]VoucherResp, len(vouchers))
 	for i, v := range vouchers {

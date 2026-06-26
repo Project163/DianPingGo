@@ -4,6 +4,7 @@ import (
 	"dianping/internal/middleware"
 	"dianping/internal/module/seckillvoucher"
 	"dianping/internal/module/shop"
+	"dianping/internal/module/upload"
 	"dianping/internal/module/user"
 	"dianping/internal/module/voucher"
 	"dianping/internal/module/voucherorder"
@@ -46,6 +47,9 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
 	voucherOrderSrv.Start()
 	voucherOrderHandler := voucherorder.NewHandler(voucherOrderSrv)
 
+	uploadSrv := upload.NewService()
+	uploadHandler := upload.NewHandler(uploadSrv)
+
 	api := r.Group("/api")
 	{
 		api.POST("/login/password", userHandler.Login)
@@ -61,6 +65,9 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
 		api.POST("/voucher/normal", voucherHandler.CreateVoucher)
 		api.POST("/voucher/seckill", voucherHandler.CreateSeckillVoucher)
 		api.GET("/voucher/shop/:shopid", voucherHandler.GetVoucherByShopID)
+
+		api.POST("/upload/blog", uploadHandler.UploadImage)
+		api.DELETE("/upload/blog", uploadHandler.DeleteImage)
 
 		auth := api.Group("")
 		auth.Use(middleware.AuthMiddleware(rdb))

@@ -16,6 +16,7 @@ func NewHandler(srv *Service) *Handler {
 	return &Handler{srv: srv}
 }
 
+// SeckillVoucher 处理秒杀优惠券请求，接受JSON格式的请求体，调用服务层进行秒杀，并返回结果
 func (h *Handler) SeckillVoucher(ctx *gin.Context) {
 	userID, ok := ctx.Get(middleware.CtxUserIDKey)
 	if !ok {

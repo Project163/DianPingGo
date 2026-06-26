@@ -14,6 +14,7 @@ type Config struct {
 	Server ServerConfig `mapstructure:"server"`
 	MySql  MySqlConfig  `mapstructure:"mysql"`
 	Redis  RedisConfig  `mapstructure:"redis"`
+	Upload UploadConfig `mapstructure:"upload"`
 }
 
 // ServerConfig 服务器配置结构体，包含端口和模式
@@ -36,6 +37,13 @@ type RedisConfig struct {
 	Addr     string `mapstructure:"addr"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
+}
+
+// UploadConfig 上传配置结构体，包含上传目录、最大文件大小和允许的文件类型
+type UploadConfig struct {
+	Dir          string   `mapstructure:"dir"`
+	MaxSize      int64    `mapstructure:"max_size"`
+	AllowedTypes []string `mapstructure:"allowed_types"`
 }
 
 // InitConfig 初始化配置函数，接受配置文件路径作为参数，返回配置对象和错误

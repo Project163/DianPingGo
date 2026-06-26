@@ -2,6 +2,7 @@ package voucher
 
 import "time"
 
+// Voucher 定义了优惠券模型，包含ID、商户ID、标题、副标题、规则、支付金额、实际金额、类型、状态、库存、开始时间、结束时间、创建时间和更新时间
 type Voucher struct {
 	ID          uint64    `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
 	ShopID      uint64    `gorm:"not null;column:shop_id" json:"shop_id"`

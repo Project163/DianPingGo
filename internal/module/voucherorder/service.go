@@ -87,6 +87,7 @@ func NewService(repo VoucherOrderRepository, seckillRepo SeckillVoucherRepositor
 	}
 }
 
+// Start 启动服务，创建消费者组并启动消息消费 goroutine，消费者组的消息来自Lua脚本(XADD)
 func (s *Service) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -101,11 +102,16 @@ func (s *Service) Start() {
 	go s.StreamConsumer()
 }
 
+// SeckillVoucher 处理秒杀优惠券请求，接受优惠券ID和用户ID作为参数，调用Lua脚本进行秒杀逻辑，并返回订单ID或错误
 func (s *Service) SeckillVoucher(ctx context.Context, voucherID uint64, userID uint64) (int64, error) {
+	// 用随机ID生成器生成一个唯一的订单ID，作为订单的标识
 	orderID, err := s.idWorker.NextID(ctx, "order")
 	if err != nil {
 		return 0, err
 	}
+	// 用Lua脚本来处理秒杀逻辑，会返回一个整数表示结果，0表示成功，1表示库存不足，2表示重复下单
+	// Lua本身控制的是缓存，通过XADD传递消息到数据库
+	// 数据库的订单处理逻辑在StreamConsumer中异步处理
 	res, err := SeckillLuaScript.Run(ctx, s.rdb, []string{}, voucherID, userID, orderID).Int()
 
 	if err != nil {
@@ -124,6 +130,7 @@ func (s *Service) SeckillVoucher(ctx context.Context, voucherID uint64, userID u
 	}
 }
 
+// CreateVoucherOrder 在数据库中创建一个新的优惠券订单记录，接受上下文和优惠券订单对象作为参数，返回错误
 func (s *Service) CreateVoucherOrder(ctx context.Context, order *VoucherOrder) error {
 	ok, err := s.seckillRepo.DeductStock(ctx, order.VoucherID)
 	if err != nil {
@@ -135,6 +142,7 @@ func (s *Service) CreateVoucherOrder(ctx context.Context, order *VoucherOrder) e
 	return s.repo.CreateVoucherOrder(ctx, order)
 }
 
+// GetVoucherOrderByID 根据订单ID查询优惠券订单，接受上下文和订单ID作为参数，返回优惠券订单对象和错误
 func (s *Service) GetVoucherOrderByID(ctx context.Context, orderID uint64) (*VoucherOrder, error) {
 	order, err := s.repo.GetVoucherOrderByID(ctx, orderID)
 	if order == nil {
@@ -146,6 +154,7 @@ func (s *Service) GetVoucherOrderByID(ctx context.Context, orderID uint64) (*Vou
 	return order, nil
 }
 
+// HandleVoucherOrder 处理优惠券订单，实现一人一单
 func (s *Service) HandleVoucherOrder(ctx context.Context, order *VoucherOrder) error {
 	// 对于单条订单，用分布式锁来控制同一用户的并发请求，锁的键为 LockOrderKey + userID，过期时间为 10 秒
 	lockKey := LockOrderKey + strconv.FormatUint(order.UserID, 10)
@@ -163,6 +172,7 @@ func (s *Service) HandleVoucherOrder(ctx context.Context, order *VoucherOrder) e
 	return s.CreateVoucherOrder(ctx, order)
 }
 
+// StreamConsumer 消费者组接收消息并处理订单，使用阻塞方式读取Redis Stream中的消息，并调用HandleVoucherOrder方法处理每条订单消息
 func (s *Service) StreamConsumer() {
 	ctx := context.Background()
 	// 创建一个循环持续订阅消息
@@ -203,6 +213,7 @@ func (s *Service) StreamConsumer() {
 	}
 }
 
+// HandlePendingList 处理消费者组的待处理消息列表，确保在消费者异常崩溃或处理失败时，仍能正确处理未确认的消息
 func (s *Service) HandlePendingList() {
 	ctx := context.Background()
 	// 通过“0”得到已投递但未处理的消息列表
@@ -231,6 +242,7 @@ func (s *Service) HandlePendingList() {
 	}
 }
 
+// ParseMessage 解析Redis Stream消息，将消息内容转换为VoucherOrder对象，便于后续处理
 func ParseMessage(values map[string]interface{}) *VoucherOrder {
 	if values == nil {
 		return nil
@@ -249,6 +261,7 @@ func ParseMessage(values map[string]interface{}) *VoucherOrder {
 	}
 }
 
+// strVal 将interface{}类型的值转换为字符串，如果值为nil则返回空字符串
 func strVal(v interface{}) string {
 	if v == nil {
 		return ""
