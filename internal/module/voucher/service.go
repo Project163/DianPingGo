@@ -33,21 +33,8 @@ func NewService(repo VoucherRepository, rdb redis.Cmdable) *Service {
 }
 
 // CreateVoucher 创建普通券
-func (s *Service) CreateVoucher(ctx context.Context, req *CreateVoucherReq) (uint64, error) {
+func (s *Service) CreateVoucher(ctx context.Context, voucher *Voucher) (uint64, error) {
 	// 创建普通券
-	voucher := &Voucher{
-		ShopID:      req.ShopID,
-		Type:        req.Type,
-		Title:       req.Title,
-		SubTitle:    req.SubTitle,
-		Rules:       req.Rules,
-		PayValue:    req.PayValue,
-		ActualValue: req.ActualValue,
-		Status:      1,
-		Stock:       req.Stock,
-		BeginTime:   req.BeginTime,
-		EndTime:     req.EndTime,
-	}
 	if err := s.repo.CreateVoucher(ctx, voucher); err != nil {
 		return 0, err
 	}
@@ -55,32 +42,19 @@ func (s *Service) CreateVoucher(ctx context.Context, req *CreateVoucherReq) (uin
 }
 
 // CreateSeckillVoucher 创建秒杀券
-func (s *Service) CreateSeckillVoucher(ctx context.Context, req *CreateVoucherReq) (uint64, error) {
-	svoucher := &Voucher{
-		ShopID:      req.ShopID,
-		Type:        1, // 秒杀券
-		Title:       req.Title,
-		SubTitle:    req.SubTitle,
-		Rules:       req.Rules,
-		PayValue:    req.PayValue,
-		ActualValue: req.ActualValue,
-		Status:      1,
-		Stock:       req.Stock,
-		BeginTime:   req.BeginTime,
-		EndTime:     req.EndTime,
-	}
+func (s *Service) CreateSeckillVoucher(ctx context.Context, svoucher *Voucher) (uint64, error) {
 	err := s.repo.CreateSeckillVoucher(ctx, svoucher, &seckillvoucher.SeckillVoucher{
 		VoucherID: svoucher.ID,
-		Stock:     req.Stock,
-		BeginTime: req.BeginTime,
-		EndTime:   req.EndTime,
+		Stock:     svoucher.Stock,
+		BeginTime: svoucher.BeginTime,
+		EndTime:   svoucher.EndTime,
 	})
 	if err != nil {
 		return 0, err
 	}
 	stockKey := fmt.Sprintf("%s%d", SeckillStockKey, svoucher.ID)
 
-	if err := s.rdb.Set(ctx, stockKey, req.Stock, 0).Err(); err != nil {
+	if err := s.rdb.Set(ctx, stockKey, svoucher.Stock, 0).Err(); err != nil {
 		return 0, err
 	}
 	return svoucher.ID, nil

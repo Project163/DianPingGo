@@ -16,6 +16,8 @@ import (
 type mockUserRepo struct {
 	getUserByPhoneFunc func(ctx context.Context, phone string) (*User, error)
 	createUserFunc     func(ctx context.Context, user *User) error
+	getUserByIDFunc    func(ctx context.Context, userID uint64) (*User, error)
+	listUsersByIDsFunc func(ctx context.Context, userIDs []uint64) ([]User, error)
 }
 
 func (m *mockUserRepo) GetUserByPhone(ctx context.Context, phone string) (*User, error) {
@@ -30,6 +32,20 @@ func (m *mockUserRepo) CreateUser(ctx context.Context, user *User) error {
 		return m.createUserFunc(ctx, user)
 	}
 	return nil
+}
+
+func (m *mockUserRepo) GetUserByID(ctx context.Context, userID uint64) (*User, error) {
+	if m.getUserByIDFunc != nil {
+		return m.getUserByIDFunc(ctx, userID)
+	}
+	return nil, nil
+}
+
+func (m *mockUserRepo) ListUsersByIDs(ctx context.Context, userIDs []uint64) ([]User, error) {
+	if m.listUsersByIDsFunc != nil {
+		return m.listUsersByIDsFunc(ctx, userIDs)
+	}
+	return nil, nil
 }
 
 func setupService(t *testing.T) (*Service, *mockUserRepo, *miniredis.Miniredis) {

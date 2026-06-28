@@ -66,4 +66,7 @@ var (
 	ErrFileTooLarge = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4401, Message: "文件过大"}
 	ErrFileType     = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4402, Message: "文件类型不支持"}
 	ErrFileUpload   = CustomError{HttpCode: http.StatusInternalServerError, BusinessCode: 4403, Message: "文件上传失败"}
+
+	// 博客模块错误
+	ErrBlogNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4501, Message: "博客不存在"}
 )

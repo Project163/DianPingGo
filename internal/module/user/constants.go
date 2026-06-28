@@ -13,4 +13,8 @@ const (
 
 	BizUserLockCode = "login:lock:"   // 存储登录锁定状态的Redis key模板，%s为手机号占位符
 	BizUserLockTTL  = 1 * time.Minute // 登录锁定的持续时间
+
+	CacheUserKey = "user:info:"     // 存储用户信息的Redis key模板，%d为用户ID占位符
+	CacheUserTTL = 30 * time.Minute // 用户信息的过期时间
+	CacheNullTTL = 5 * time.Minute  // 用户信息不存在时的缓存过期时间，防止缓存穿透
 )

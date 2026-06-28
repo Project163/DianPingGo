@@ -3,11 +3,13 @@ package user
 import (
 	"context"
 	"crypto/rand"
+	"dianping/internal/cache"
 	"dianping/pkg/errmsg"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,20 +23,24 @@ import (
 type UserRepository interface {
 	CreateUser(ctx context.Context, user *User) error
 	GetUserByPhone(ctx context.Context, phone string) (*User, error)
+	GetUserByID(ctx context.Context, userID uint64) (*User, error)
+	ListUsersByIDs(ctx context.Context, userIDs []uint64) ([]User, error)
 }
 
 // Service 定义了用户服务接口，包含登录、验证码登录、发送验证码和注册新用户的方法
 type Service struct {
 	repo UserRepository
 	// jwtSecret []byte
-	rdb redis.Cmdable
+	cacheClient *cache.CacheClient
+	rdb         redis.Cmdable
 }
 
 func NewService(repo UserRepository, rdb redis.Cmdable) *Service {
 	return &Service{
 		repo: repo,
 		// jwtSecret: []byte(secret),
-		rdb: rdb,
+		cacheClient: cache.NewCacheClient(rdb),
+		rdb:         rdb,
 	}
 }
 
@@ -257,4 +263,45 @@ func (s *Service) Register(ctx context.Context, req *CreateUserReq) (*User, erro
 	}
 
 	return user, nil
+}
+
+// GetUserByID 根据用户ID查询用户信息，返回UserDTO
+func (s *Service) GetUserByID(ctx context.Context, userID uint64) (*UserDTO, error) {
+	key := CacheUserKey + strconv.FormatUint(userID, 10)
+	var user User
+	err := s.cacheClient.QueryWithPassThrough(ctx, key, &user,
+		CacheUserTTL, CacheNullTTL, func() (any, error) {
+			return s.repo.GetUserByID(ctx, userID)
+		})
+	if err != nil {
+		if errors.Is(err, cache.ErrDataNotFound) {
+			return nil, &errmsg.ErrUserNotFound
+		}
+		return nil, err
+	}
+	return &UserDTO{ID: user.ID, NickName: user.NickName, Icon: user.Icon}, nil
+}
+
+// ListUsersByIDs 根据用户ID列表批量查询用户信息，返回UserDTO列表
+// TODO: 尚未实现列表查询的缓存优化，后续可以考虑使用Redis的MGET或管道操作来批量获取用户信息
+func (s *Service) ListUsersByIDs(ctx context.Context, userIDs []uint64) ([]UserDTO, error) {
+	users, err := s.repo.ListUsersByIDs(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	userDTOs := toUserDTOs(users)
+	return userDTOs, nil
+}
+
+// toUserDTOs 将User列表转换为UserDTO列表
+func toUserDTOs(users []User) []UserDTO {
+	userDTOs := make([]UserDTO, len(users))
+	for i, user := range users {
+		userDTOs[i] = UserDTO{
+			ID:       user.ID,
+			NickName: user.NickName,
+			Icon:     user.Icon,
+		}
+	}
+	return userDTOs
 }

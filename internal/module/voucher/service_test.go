@@ -14,9 +14,9 @@ import (
 )
 
 type mockVoucherRepo struct {
-	createVoucherFunc       func(ctx context.Context, voucher *Voucher) error
-	getVoucherByIDFunc      func(ctx context.Context, id uint64) (*Voucher, error)
-	getByShopIDFunc         func(ctx context.Context, shopID uint64) ([]Voucher, error)
+	createVoucherFunc        func(ctx context.Context, voucher *Voucher) error
+	getVoucherByIDFunc       func(ctx context.Context, id uint64) (*Voucher, error)
+	getByShopIDFunc          func(ctx context.Context, shopID uint64) ([]Voucher, error)
 	createSeckillVoucherFunc func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error
 }
 
@@ -67,7 +67,7 @@ func TestCreateVoucher_Service(t *testing.T) {
 			return nil
 		}
 
-		id, err := srv.CreateVoucher(context.Background(), &CreateVoucherReq{
+		id, err := srv.CreateVoucher(context.Background(), &Voucher{
 			ShopID:      1,
 			Title:       "测试券",
 			SubTitle:    "副标题",
@@ -89,7 +89,7 @@ func TestCreateVoucher_Service(t *testing.T) {
 			return fmt.Errorf("db insert failed")
 		}
 
-		id, err := srv.CreateVoucher(context.Background(), &CreateVoucherReq{
+		id, err := srv.CreateVoucher(context.Background(), &Voucher{
 			ShopID:      1,
 			Title:       "测试券",
 			SubTitle:    "副标题",
@@ -116,7 +116,7 @@ func TestCreateSeckillVoucher_Service(t *testing.T) {
 			return nil
 		}
 
-		id, err := srv.CreateSeckillVoucher(context.Background(), &CreateVoucherReq{
+		id, err := srv.CreateSeckillVoucher(context.Background(), &Voucher{
 			ShopID:      1,
 			Title:       "秒杀券",
 			SubTitle:    "限时秒杀",
@@ -143,7 +143,7 @@ func TestCreateSeckillVoucher_Service(t *testing.T) {
 			return fmt.Errorf("transaction failed")
 		}
 
-		id, err := srv.CreateSeckillVoucher(context.Background(), &CreateVoucherReq{
+		id, err := srv.CreateSeckillVoucher(context.Background(), &Voucher{
 			ShopID:      1,
 			Title:       "秒杀券",
 			SubTitle:    "限时秒杀",

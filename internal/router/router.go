@@ -2,6 +2,8 @@ package router
 
 import (
 	"dianping/internal/middleware"
+	"dianping/internal/module/blog"
+	"dianping/internal/module/follow"
 	"dianping/internal/module/seckillvoucher"
 	"dianping/internal/module/shop"
 	"dianping/internal/module/upload"
@@ -50,31 +52,58 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
 	uploadSrv := upload.NewService()
 	uploadHandler := upload.NewHandler(uploadSrv)
 
+	followRepo := follow.NewRepository(db)
+
+	blogRepo := blog.NewRepository(db)
+	blogSrv := blog.NewService(blogRepo, rdb, userSrv, followRepo)
+	blogHandler := blog.NewHandler(blogSrv)
+
 	api := r.Group("/api")
 	{
 		api.POST("/login/password", userHandler.Login)
 		api.POST("/login/code", userHandler.CodeLogin)
 		api.POST("/code", userHandler.SendCode)
 
-		api.GET("/shops/:id", shopHandler.GetShopByID)
-		api.PUT("/shops/:id", shopHandler.UpdateShop)
-		api.GET("/shops/type/:type_id", shopHandler.GetShopsByType)
-		api.GET("/shops/name/:name", shopHandler.GetShopsByName)
-		api.POST("/shops", shopHandler.CreateShop)
+		shop := api.Group("/shops")
+		{
+			shop.POST("", shopHandler.CreateShop)
+			shop.GET("/:id", shopHandler.GetShopByID)
+			shop.PUT("/:id", shopHandler.UpdateShop)
+			shop.GET("/type/:type_id", shopHandler.GetShopsByType)
+			shop.GET("/name/:name", shopHandler.GetShopsByName)
+		}
 
-		api.POST("/voucher/normal", voucherHandler.CreateVoucher)
-		api.POST("/voucher/seckill", voucherHandler.CreateSeckillVoucher)
-		api.GET("/voucher/shop/:shopid", voucherHandler.GetVoucherByShopID)
+		voucher := api.Group("/voucher")
+		{
+			voucher.POST("/normal", voucherHandler.CreateVoucher)
+			voucher.POST("/seckill", voucherHandler.CreateSeckillVoucher)
+			voucher.GET("/shop/:shopid", voucherHandler.GetVoucherByShopID)
+		}
 
-		api.POST("/upload/blog", uploadHandler.UploadImage)
-		api.DELETE("/upload/blog", uploadHandler.DeleteImage)
+		upload := api.Group("/upload")
+		{
+			upload.POST("/blog", uploadHandler.UploadImage)
+			upload.DELETE("/blog", uploadHandler.DeleteImage)
+		}
+
+		api.GET("/blog/hot", blogHandler.GetBlogsHot)
+		api.GET("/blog/likes/:id", blogHandler.GetBlogLikesByID)
 
 		auth := api.Group("")
 		auth.Use(middleware.AuthMiddleware(rdb))
 		{
 			auth.POST("/seckill/:voucherId", voucherOrderHandler.SeckillVoucher)
-		}
 
+			blog := auth.Group("/blog")
+			{
+				blog.POST("", blogHandler.CreateBlog)
+				api.GET("/blog/:id", blogHandler.GetBlogByID)
+				blog.GET("/of/me", blogHandler.GetBlogSelf)
+				blog.PUT("/like/:id", blogHandler.LikeBlog)
+				blog.GET("/of/user/:id", blogHandler.GetBlogByUserID)
+				blog.GET("/of/follow", blogHandler.GetBlogOfFollow)
+			}
+		}
 	}
 
 	r.GET("/ping", func(ctx *gin.Context) {

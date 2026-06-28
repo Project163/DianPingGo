@@ -23,7 +23,20 @@ func (h *Handler) CreateVoucher(ctx *gin.Context) {
 		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))
 		return
 	}
-	id, err := h.srv.CreateVoucher(ctx.Request.Context(), &req)
+	voucher := &Voucher{
+		ShopID:      req.ShopID,
+		Title:       req.Title,
+		SubTitle:    req.SubTitle,
+		Rules:       req.Rules,
+		PayValue:    req.PayValue,
+		ActualValue: req.ActualValue,
+		Type:        0, // 普通券
+		Stock:       req.Stock,
+		Status:      1, // 默认启用
+		BeginTime:   req.BeginTime,
+		EndTime:     req.EndTime,
+	}
+	id, err := h.srv.CreateVoucher(ctx.Request.Context(), voucher)
 	if err != nil {
 		response.Fail(ctx, err)
 		return
@@ -38,7 +51,20 @@ func (h *Handler) CreateSeckillVoucher(ctx *gin.Context) {
 		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))
 		return
 	}
-	id, err := h.srv.CreateSeckillVoucher(ctx.Request.Context(), &req)
+	voucher := &Voucher{
+		ShopID:      req.ShopID,
+		Type:        1, // 秒杀券
+		Title:       req.Title,
+		SubTitle:    req.SubTitle,
+		Rules:       req.Rules,
+		PayValue:    req.PayValue,
+		ActualValue: req.ActualValue,
+		Stock:       req.Stock,
+		Status:      1, // 默认启用
+		BeginTime:   req.BeginTime,
+		EndTime:     req.EndTime,
+	}
+	id, err := h.srv.CreateSeckillVoucher(ctx.Request.Context(), voucher)
 	if err != nil {
 		response.Fail(ctx, err)
 		return
