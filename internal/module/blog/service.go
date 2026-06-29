@@ -33,8 +33,9 @@ type UserService interface {
 	ListUsersByIDs(ctx context.Context, userIDs []uint64) ([]user.UserDTO, error)
 }
 
-type FollowRepository interface {
+type FollowService interface {
 	ListFollowedUserIDs(ctx context.Context, userID uint64) ([]uint64, error)
+	ListFollowerUserIDs(ctx context.Context, userID uint64) ([]uint64, error)
 }
 
 type BlogRepository interface {
@@ -48,18 +49,18 @@ type BlogRepository interface {
 }
 
 type Service struct {
-	repo       BlogRepository
-	rdb        redis.Cmdable
-	userSrv    UserService
-	followRepo FollowRepository
+	repo      BlogRepository
+	rdb       redis.Cmdable
+	userSrv   UserService
+	followSrv FollowService
 }
 
-func NewService(repo BlogRepository, rdb redis.Cmdable, userSrv UserService, followRepo FollowRepository) *Service {
+func NewService(repo BlogRepository, rdb redis.Cmdable, userSrv UserService, followSrv FollowService) *Service {
 	return &Service{
-		repo:       repo,
-		rdb:        rdb,
-		userSrv:    userSrv,
-		followRepo: followRepo,
+		repo:      repo,
+		rdb:       rdb,
+		userSrv:   userSrv,
+		followSrv: followSrv,
 	}
 }
 
@@ -69,8 +70,8 @@ func (s *Service) CreateBlog(ctx context.Context, blog *Blog) (uint64, error) {
 		return 0, err
 	}
 
-	if s.followRepo != nil {
-		followerIDs, err := s.followRepo.ListFollowedUserIDs(ctx, blog.UserId)
+	if s.followSrv != nil {
+		followerIDs, err := s.followSrv.ListFollowerUserIDs(ctx, blog.UserId)
 		if err == nil && len(followerIDs) > 0 {
 			s.pushFeed(ctx, followerIDs, blog.ID)
 		}

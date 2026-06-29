@@ -53,6 +53,8 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
 	uploadHandler := upload.NewHandler(uploadSrv)
 
 	followRepo := follow.NewRepository(db)
+	followSrv := follow.NewService(followRepo, userSrv, rdb)
+	followHandler := follow.NewHandler(followSrv)
 
 	blogRepo := blog.NewRepository(db)
 	blogSrv := blog.NewService(blogRepo, rdb, userSrv, followRepo)
@@ -102,6 +104,12 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
 				blog.PUT("/like/:id", blogHandler.LikeBlog)
 				blog.GET("/of/user/:id", blogHandler.GetBlogByUserID)
 				blog.GET("/of/follow", blogHandler.GetBlogOfFollow)
+			}
+			follow := auth.Group("/follow")
+			{
+				follow.POST("/:id/:isFollow", followHandler.Follow)
+				follow.GET("/or/not/:id", followHandler.IsFollowed)
+				follow.GET("/common/:id", followHandler.FollowCommon)
 			}
 		}
 	}

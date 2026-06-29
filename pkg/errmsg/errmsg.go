@@ -69,4 +69,7 @@ var (
 
 	// 博客模块错误
 	ErrBlogNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4501, Message: "博客不存在"}
+
+	// 关注模块错误
+	ErrFollowYourself = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4601, Message: "不能关注自己"}
 )
