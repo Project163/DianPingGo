@@ -34,3 +34,16 @@ func InitRedis(cfg config.RedisConfig) (*redis.Client, error) {
 	log.Printf("Redis连接成功!")
 	return RedisClient, nil
 }
+
+func CloseRedis() {
+	if RedisClient != nil {
+		_, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := RedisClient.Close(); err != nil {
+			log.Printf("关闭Redis连接失败：%v", err)
+		} else {
+			log.Println("Redis连接已关闭")
+		}
+	}
+}

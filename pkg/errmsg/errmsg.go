@@ -72,4 +72,7 @@ var (
 
 	// 关注模块错误
 	ErrFollowYourself = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4601, Message: "不能关注自己"}
+
+	// 用户信息模块错误
+	ErrUserInfoNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4701, Message: "用户信息不存在"}
 )

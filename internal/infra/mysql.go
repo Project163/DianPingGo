@@ -45,3 +45,18 @@ func InitMySQL(cfg config.MySqlConfig, serverMode string) (*gorm.DB, error) {
 	DB = db
 	return DB, nil
 }
+
+func CloseMySQL() {
+	if DB != nil {
+		sqlDB, err := DB.DB()
+		if err != nil {
+			log.Printf("获取数据库连接失败：%v", err)
+			return
+		}
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("关闭数据库连接失败：%v", err)
+		} else {
+			log.Println("MySQL连接已关闭")
+		}
+	}
+}

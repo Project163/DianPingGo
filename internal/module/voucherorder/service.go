@@ -2,6 +2,8 @@ package voucherorder
 
 import (
 	"context"
+	"errors"
+	"log"
 	"strconv"
 	"sync"
 	"time"
@@ -36,7 +38,7 @@ local orderId = ARGV[3]
 
 local stockKey = 'seckill:stock:' .. voucherId
 local orderKey = 'seckill:order:' .. voucherId .. ':' .. userId
-local streamKey = 'stream.orders'
+local streamKey = 'stream:orders'
 
 local exists = redis.call('SISMEMBER', orderKey, userId)
 if exists == 1 then
@@ -76,6 +78,9 @@ type Service struct {
 
 	mu      sync.Mutex
 	started bool
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewService(repo VoucherOrderRepository, seckillRepo SeckillVoucherRepository, rdb redis.Cmdable, idWorker *idgen.RedisIDWorker) *Service {
@@ -95,11 +100,25 @@ func (s *Service) Start() {
 		return
 	}
 	s.started = true
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 
 	// 在服务启动时创建消费者组，组键为 StreamOrderKey，组名为 StreamGroupName，起始ID为 "0"
 	s.rdb.XGroupCreateMkStream(context.Background(), StreamOrderKey, StreamGroupName, "0")
-	// 启动一个 goroutine 来消费订单消息
-	go s.StreamConsumer()
+
+	go s.consumeNewMessages()
+	go s.consumePendingMessages()
+}
+
+func (s *Service) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.started {
+		return
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.started = false
 }
 
 // SeckillVoucher 处理秒杀优惠券请求，接受优惠券ID和用户ID作为参数，调用Lua脚本进行秒杀逻辑，并返回订单ID或错误
@@ -172,74 +191,147 @@ func (s *Service) HandleVoucherOrder(ctx context.Context, order *VoucherOrder) e
 	return s.CreateVoucherOrder(ctx, order)
 }
 
-// StreamConsumer 消费者组接收消息并处理订单，使用阻塞方式读取Redis Stream中的消息，并调用HandleVoucherOrder方法处理每条订单消息
-func (s *Service) StreamConsumer() {
-	ctx := context.Background()
-	// 创建一个循环持续订阅消息
+func (s *Service) consumeNewMessages() {
+	// 处理新消息的逻辑
 	for {
-		// 从 Redis Stream 中读取消息，使用消费者组的方式，阻塞等待新消息到来
-		msgs, err := s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+			// 读取新消息并处理
+		}
+
+		msgs, err := s.rdb.XReadGroup(s.ctx, &redis.XReadGroupArgs{
 			Group:    StreamGroupName,
 			Consumer: StreamConsumerName,
 			Streams:  []string{StreamOrderKey, ">"},
 			Count:    1,
 			Block:    2 * time.Second,
 		}).Result()
-		// 如果消费者异常崩溃或处理失败（无XACK），消息会留在消费者组的待处理列表中（Pending List）
-		// 通过HandlePendingList方法来处理这些待处理的消息，确保消息不会丢失
+
 		if err != nil {
-			s.HandlePendingList()
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			log.Printf("读取Stream新消息失败：%v", err)
 			continue
 		}
-		// 对于读取到的每条消息，进行处理，streams是一个包含StreamOrderKey和消息列表的结构体
-		// msgs是一个包含多个这样的结构体的切片
-		for _, stream := range msgs {
-			// 解析消息内容，构造订单对象，并调用HandleVoucherOrder方法处理订单
-			for _, msg := range stream.Messages {
-				order := ParseMessage(msg.Values)
-				if order == nil {
-					continue
-				}
-				// 对于每条解析后的订单消息，调用HandleVoucherOrder方法进行处理
-				// 处理完成后无论成功与否，都使用XACK命令确认消息已被处理，从消费者组的待处理列表中移除该消息
-				// 防止消息重复处理和阻塞，确保系统的可靠性和一致性
-				if err := s.HandleVoucherOrder(ctx, order); err != nil {
-					s.rdb.XAck(ctx, StreamOrderKey, StreamGroupName, msg.ID)
-					continue
-				}
-				s.rdb.XAck(ctx, StreamOrderKey, StreamGroupName, msg.ID)
-			}
+
+		for _, msg := range msgs[0].Messages {
+			order := ParseMessage(msg.Values)
+			s.processMessage(s.ctx, msg.ID, order)
 		}
 	}
 }
 
-// HandlePendingList 处理消费者组的待处理消息列表，确保在消费者异常崩溃或处理失败时，仍能正确处理未确认的消息
-func (s *Service) HandlePendingList() {
-	ctx := context.Background()
-	// 通过“0”得到已投递但未处理的消息列表
+func (s *Service) consumePendingMessages() {
+	// 处理待处理消息的逻辑
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 	for {
-		msgs, err := s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    StreamGroupName,
-			Consumer: StreamConsumerName,
-			Streams:  []string{StreamOrderKey, "0"},
-			Count:    1,
-		}).Result()
-		if err != nil || len(msgs) == 0 || len(msgs[0].Messages) == 0 {
+		select {
+		case <-s.ctx.Done():
+			s.processPendingList()
 			return
-		}
-
-		// 对于每条待处理的消息，进行处理
-		for _, stream := range msgs {
-			for _, msg := range stream.Messages {
-				order := ParseMessage(msg.Values)
-				if order == nil {
-					continue
-				}
-				s.HandleVoucherOrder(ctx, order)
-				s.rdb.XAck(ctx, StreamOrderKey, StreamGroupName, msg.ID)
-			}
+		case <-ticker.C:
+			s.processPendingList()
 		}
 	}
+}
+
+func (s *Service) processPendingList() {
+	ctx := context.Background()
+	// 通过“0”得到已投递但未处理的消息列表
+	msgs, err := s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    StreamGroupName,
+		Consumer: StreamConsumerName,
+		Streams:  []string{StreamOrderKey, "0"},
+		Count:    int64(PendingBatchSize),
+		Block:    0,
+	}).Result()
+
+	if err != nil || len(msgs) == 0 || len(msgs[0].Messages) == 0 {
+		return
+	}
+	// 对于每条待处理的消息，进行处理
+	for _, msg := range msgs[0].Messages {
+		order := ParseMessage(msg.Values)
+		s.processMessage(ctx, msg.ID, order)
+	}
+}
+
+// processMessage 处理单条消息，调用 HandleVoucherOrder 方法处理订单，并根据处理结果进行确认或重试
+func (s *Service) processMessage(ctx context.Context, msgID string, order *VoucherOrder) {
+	if order == nil {
+		// 对于无法解析的消息，直接确认并删除，避免阻塞消费者组
+		s.rdb.XAck(ctx, StreamOrderKey, StreamGroupName, msgID)
+		return
+	}
+
+	err := s.HandleVoucherOrder(ctx, order)
+	if err == nil {
+		// 处理成功，确认消息
+		s.rdb.XAck(ctx, StreamOrderKey, StreamGroupName, msgID)
+		s.rdb.HDel(ctx, RetryKey, msgID)
+	}
+
+	// 判断是否为永久性错误，如果是，则将消息移动到死信队列，并确认消息
+	if isPermanentError(err) {
+		s.moveToDLQ(ctx, msgID, order, err, -1)
+		s.rdb.XAck(ctx, StreamOrderKey, StreamGroupName, msgID)
+		s.rdb.HDel(ctx, RetryKey, msgID)
+		log.Printf("[voucherorder] 订单 %d 重试%d次后仍重试，已加入DLQ：%v",
+			order.ID, -1, err)
+		return
+	}
+	// 对于非永久性错误，增加重试计数
+	retryCount, _ := s.rdb.HIncrBy(ctx, RetryKey, msgID, 1).Result()
+	if retryCount > MaxRetries {
+		// 超过最大重试次数，将消息移动到死信队列，并确认消息
+		s.moveToDLQ(ctx, msgID, order, err, int(retryCount))
+		s.rdb.XAck(ctx, StreamOrderKey, StreamGroupName, msgID)
+		s.rdb.HDel(ctx, RetryKey, msgID)
+		log.Printf("[voucherorder] 订单 %d 重试%d次后仍重试，已加入DLQ：%v",
+			order.ID, retryCount, err)
+		return
+	}
+
+	log.Printf("[voucherorder] 订单 %d 处理失败(第%d/%d次): %v，留在PEL等待重试",
+		order.ID, 1, MaxRetries, err)
+}
+
+func isPermanentError(err error) bool {
+	var ce *errmsg.CustomError
+	// 使用 errors.As 检查错误类型，如果是自定义错误类型，则根据具体的错误类型判断是否为永久性错误
+	if errors.As(err, &ce) {
+		switch {
+		case ce == &errmsg.ErrNoStock:
+			return true
+		case ce == &errmsg.ErrRepeatedOrder:
+			return true
+		case ce == &errmsg.ErrInvalidParam:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// moveToDLQ 将处理失败的消息移动到死信队列，记录原始消息ID、订单信息、错误信息和重试次数
+func (s *Service) moveToDLQ(ctx context.Context, msgID string, order *VoucherOrder, err error, retryCount int) {
+	s.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: DeadStreamKey,
+		Values: map[string]interface{}{
+			"original_id": msgID,
+			"userId":      order.UserID,
+			"voucherId":   order.VoucherID,
+			"orderId":     order.ID,
+			"error":       err.Error(),
+			"retry_count": retryCount,
+			"moved_at":    time.Now().Unix(),
+		},
+	})
 }
 
 // ParseMessage 解析Redis Stream消息，将消息内容转换为VoucherOrder对象，便于后续处理

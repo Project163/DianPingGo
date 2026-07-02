@@ -3,6 +3,7 @@ package shop
 import (
 	"dianping/pkg/errmsg"
 	"dianping/pkg/response"
+	"fmt"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -86,6 +87,10 @@ func (h *Handler) UpdateShop(ctx *gin.Context) {
 // GetShopsByType 获取商户列表
 func (h *Handler) GetShopsByType(ctx *gin.Context) {
 	typeIDStr := ctx.Query("typeId")
+	if typeIDStr == "" {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, fmt.Errorf("typeId is required")))
+		return
+	}
 	typeID, err := strconv.ParseUint(typeIDStr, 10, 64)
 	if err != nil {
 		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))
@@ -93,6 +98,10 @@ func (h *Handler) GetShopsByType(ctx *gin.Context) {
 	}
 
 	currentStr := ctx.DefaultQuery("current", "1")
+	if currentStr == "" {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, fmt.Errorf("current is required")))
+		return
+	}
 	current, err := strconv.Atoi(currentStr)
 	if err != nil || current < 1 {
 		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))

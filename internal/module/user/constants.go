@@ -17,4 +17,6 @@ const (
 	CacheUserKey = "user:info:"     // 存储用户信息的Redis key模板，%d为用户ID占位符
 	CacheUserTTL = 30 * time.Minute // 用户信息的过期时间
 	CacheNullTTL = 5 * time.Minute  // 用户信息不存在时的缓存过期时间，防止缓存穿透
+
+	BizUserSignKey = "user:sign:" // 存储用户签到状态的Redis key模板，%d为用户ID占位符
 )

@@ -81,15 +81,16 @@ func (s *Service) Login(ctx context.Context, req *LoginReq) (*LoginResp, error) 
 
 	// 使用uuid生成token，替代jwt
 	tokenStr := strings.ReplaceAll(uuid.New().String(), "-", "")
-	// 将用户信息存储在Redis中，key为BizUserToken + tokenStr，value为用户ID、昵称和头像URL等信息，过期时间为24小时
+	// 将用户信息存储在Redis中，key为BizUserToken + tokenStr，value为用户ID、昵称和头像URL等信息
 	userDTO := &UserDTO{
 		ID:       u.ID,
 		NickName: u.NickName,
 		Icon:     u.Icon,
 	}
+	IDStr := strconv.FormatUint(userDTO.ID, 10)
 	// HSet支持一次设置多个字段，构造一个map[string]interface{}来存储用户信息
 	userMap := map[string]interface{}{
-		"id":       userDTO.ID,
+		"id":       IDStr,
 		"nickname": userDTO.NickName,
 		"icon":     userDTO.Icon,
 	}
@@ -161,8 +162,10 @@ func (s *Service) CodeLogin(ctx context.Context, req *CodeLoginReq) (*LoginResp,
 		Icon:     u.Icon,
 	}
 
+	IDStr := strconv.FormatUint(userDTO.ID, 10)
+
 	userMap := map[string]interface{}{
-		"id":       userDTO.ID,
+		"id":       IDStr,
 		"nickname": userDTO.NickName,
 		"icon":     userDTO.Icon,
 	}
@@ -228,8 +231,9 @@ func (s *Service) Register(ctx context.Context, req *CreateUserReq) (*User, erro
 		bytes := make([]byte, 5)
 		if _, err := rand.Read(bytes); err != nil {
 			nickname = fmt.Sprintf("user_%d", time.Now().Unix())
+		} else {
+			nickname = "user_" + hex.EncodeToString(bytes)
 		}
-		nickname = "user_" + hex.EncodeToString(bytes)
 	} else {
 		nickname = req.NickName
 	}
@@ -291,6 +295,38 @@ func (s *Service) ListUsersByIDs(ctx context.Context, userIDs []uint64) ([]UserD
 	}
 	userDTOs := toUserDTOs(users)
 	return userDTOs, nil
+}
+
+func (s *Service) Sign(ctx context.Context, userID uint64) error {
+	now := time.Now()
+	yyyyMM := now.Format("2006:01:")
+	key := BizUserSignKey + yyyyMM + strconv.FormatUint(userID, 10)
+	dayOfMonth := now.Day() - 1 // BitMap的偏移量从0开始，所以要减1
+	_, err := s.rdb.SetBit(ctx, key, int64(dayOfMonth), 1).Result()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) SignCount(ctx context.Context, userID uint64) (int, error) {
+	yyyyMM := time.Now().Format("2006:01:")
+	key := BizUserSignKey + yyyyMM + strconv.FormatUint(userID, 10)
+	dayOfMonth := time.Now().Day() - 1 // BitMap的偏移量从0开始，所以要减1
+	result := make([]int64, dayOfMonth+1)
+	result, err := s.rdb.BitField(ctx, key, "GET", fmt.Sprintf("u%d", dayOfMonth+1), 0).Result()
+	if err != nil {
+		return 0, err
+	}
+	if len(result) == 0 {
+		return 0, nil
+	}
+	num := result[0]
+	var count int = 0
+	for n := num; n&1 == 1; n >>= 1 {
+		count++
+	}
+	return count, nil
 }
 
 // toUserDTOs 将User列表转换为UserDTO列表

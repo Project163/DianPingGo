@@ -11,7 +11,7 @@ import (
 )
 
 var followCacheAddLuaScript = redis.NewScript(`
-loacl key = KEYS[1]
+local key = KEYS[1]
 local loadKey = KEYS[2]
 local followUserID = ARGV[1]
 local ttl = tonumber(ARGV[2])
@@ -85,7 +85,9 @@ func (s *Service) Follow(ctx context.Context, follow *Follow) error {
 	ttl := int64(BizFollowerTTL.Seconds())
 	_, err = followCacheAddLuaScript.Run(ctx, s.rdb, []string{key, loadKey}, strconv.FormatUint(follow.FollowUserID, 10), ttl).Result()
 	if err != nil {
-		_ = s.rdb.Del(ctx, key, loadKey).Err()
+		if err = s.rdb.Del(ctx, key, loadKey).Err(); err != nil {
+			return errmsg.NewError(errmsg.ErrInternalSec, err)
+		}
 		return nil
 	}
 	// // 更新缓存
@@ -132,7 +134,9 @@ func (s *Service) Unfollow(ctx context.Context, follow *Follow) error {
 	ttl := int64(BizFollowerTTL.Seconds())
 	_, err = followCacheRemoveScript.Run(ctx, s.rdb, []string{key, loadKey}, strconv.FormatUint(follow.FollowUserID, 10), ttl).Result()
 	if err != nil {
-		_ = s.rdb.Del(ctx, key, loadKey).Err()
+		if err = s.rdb.Del(ctx, key, loadKey).Err(); err != nil {
+			return errmsg.NewError(errmsg.ErrInternalSec, err)
+		}
 		return nil
 	}
 	// loaded, err := s.rdb.Exists(ctx, loadKey).Result()

@@ -4,18 +4,31 @@ import (
 	"context"
 	"dianping/internal/config"
 	"dianping/internal/infra"
+	"dianping/internal/module/blog"
+	"dianping/internal/module/follow"
+	"dianping/internal/module/seckillvoucher"
+	"dianping/internal/module/shop"
+	"dianping/internal/module/upload"
+	"dianping/internal/module/user"
+	"dianping/internal/module/userinfo"
+	"dianping/internal/module/voucher"
+	"dianping/internal/module/voucherorder"
 	"dianping/internal/router"
+	"dianping/pkg/idgen"
 	"dianping/pkg/validator"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 )
 
 type App struct {
 	cfg *config.Config
+
+	voucherOrderSrv *voucherorder.Service
 }
 
 // NewApp 创建一个新的App实例，接受配置文件路径作为参数，返回App对象和错误
@@ -42,7 +55,40 @@ func NewApp(configPath string) (*App, error) {
 func (a *App) Start() error {
 	validator.InitValidator()
 
-	r := router.NewRouter(a.cfg.Server.Mode, infra.DB, infra.RedisClient)
+	userInfoRepo := userinfo.NewRepository(infra.DB)
+	userInfoSrv := userinfo.NewService(userInfoRepo)
+
+	userRepo := user.NewRepository(infra.DB)
+	userSrv := user.NewService(userRepo, infra.RedisClient)
+	userHandler := user.NewHandler(userSrv, *userInfoSrv)
+
+	shopRepo := shop.NewRepository(infra.DB)
+	shopSrv := shop.NewService(shopRepo, infra.RedisClient)
+	shopHandler := shop.NewHandler(shopSrv)
+
+	voucherRepo := voucher.NewRepository(infra.DB)
+	seckillVoucherRepo := seckillvoucher.NewRepository(infra.DB)
+	voucherSrv := voucher.NewService(voucherRepo, infra.RedisClient)
+	voucherHandler := voucher.NewHandler(voucherSrv)
+
+	voucherOrderRepo := voucherorder.NewRepository(infra.DB)
+	a.voucherOrderSrv = voucherorder.NewService(voucherOrderRepo, seckillVoucherRepo, infra.RedisClient, idgen.NewRedisIDWorker(infra.RedisClient))
+	voucherOrderHandler := voucherorder.NewHandler(a.voucherOrderSrv)
+
+	uploadSrv := upload.NewService()
+	uploadHandler := upload.NewHandler(uploadSrv)
+
+	followRepo := follow.NewRepository(infra.DB)
+	followSrv := follow.NewService(followRepo, userSrv, infra.RedisClient)
+	followHandler := follow.NewHandler(followSrv)
+
+	blogRepo := blog.NewRepository(infra.DB)
+	blogSrv := blog.NewService(blogRepo, infra.RedisClient, userSrv, followSrv)
+	blogHandler := blog.NewHandler(blogSrv)
+
+	a.voucherOrderSrv.Start()
+
+	r := router.NewRouter(a.cfg.Server.Mode, infra.DB, infra.RedisClient, userHandler, shopHandler, voucherHandler, voucherOrderHandler, uploadHandler, followHandler, blogHandler)
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", a.cfg.Server.Port),
@@ -57,12 +103,9 @@ func (a *App) Start() error {
 	}()
 
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("收到中断信号，正在关闭服务器...")
-	if err := server.Close(); err != nil {
-		log.Fatalf("关闭服务器失败：%v", err)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -71,6 +114,14 @@ func (a *App) Start() error {
 		log.Fatalf("服务器关闭失败：%v", err)
 	}
 	log.Println("服务器已成功关闭")
+
+	if a.voucherOrderSrv != nil {
+		a.voucherOrderSrv.Stop()
+	}
+
+	infra.CloseMySQL()
+	infra.CloseRedis()
+
 	return nil
 }
 

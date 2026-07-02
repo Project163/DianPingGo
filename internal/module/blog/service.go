@@ -296,7 +296,10 @@ func (s *Service) pushFeed(ctx context.Context, followerIDs []uint64, blogID uin
 			Member: blogID,
 		})
 	}
-	_, _ = pipe.Exec(ctx)
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		log.Printf("pushFeed ZAdd error: %v", err)
+	}
 }
 
 // populateBlog 填充单个博文的作者信息和当前用户的点赞状态
@@ -366,7 +369,10 @@ func (s *Service) checkIsLiked(ctx context.Context, blogs []*Blog, userID uint64
 		key := BizBlogLikedKey + strconv.FormatUint(blogs[i].ID, 10)
 		cmders[i] = pipe.ZScore(ctx, key, strconv.FormatUint(userID, 10))
 	}
-	_, _ = pipe.Exec(ctx)
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		log.Printf("checkIsLiked Pipeline error: %v", err)
+	}
 	for i := range blogs {
 		_, err := cmders[i].Result()
 		if err != nil {

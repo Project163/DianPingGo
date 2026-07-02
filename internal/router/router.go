@@ -1,16 +1,15 @@
 package router
 
 import (
+	"dianping/internal/config"
 	"dianping/internal/middleware"
 	"dianping/internal/module/blog"
 	"dianping/internal/module/follow"
-	"dianping/internal/module/seckillvoucher"
 	"dianping/internal/module/shop"
 	"dianping/internal/module/upload"
 	"dianping/internal/module/user"
 	"dianping/internal/module/voucher"
 	"dianping/internal/module/voucherorder"
-	"dianping/pkg/idgen"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -18,7 +17,15 @@ import (
 	"gorm.io/gorm"
 )
 
-func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
+func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
+	userHandler *user.Handler,
+	shopHandler *shop.Handler,
+	voucherHandler *voucher.Handler,
+	voucherOrderHandler *voucherorder.Handler,
+	uploadHandler *upload.Handler,
+	followHandler *follow.Handler,
+	blogHandler *blog.Handler,
+) *gin.Engine {
 	if mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	} else {
@@ -27,52 +34,31 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
 
 	r := gin.Default()
 
+	r.Static("/blogs", config.GlobalConfig.Upload.Dir+"/blogs")
+
 	// jwtSecret := os.Getenv("JWT_SECRET")
 	// if jwtSecret == "" {
 	// 	jwtSecret = "default_secret"
 	// }
 
-	userRepo := user.NewRepository(db)
-	userSrv := user.NewService(userRepo, rdb)
-	userHandler := user.NewHandler(userSrv)
-
-	shopRepo := shop.NewRepository(db)
-	shopSrv := shop.NewService(shopRepo, rdb)
-	shopHandler := shop.NewHandler(shopSrv)
-
-	voucherRepo := voucher.NewRepository(db)
-	seckillVoucherRepo := seckillvoucher.NewRepository(db)
-	voucherSrv := voucher.NewService(voucherRepo, rdb)
-	voucherHandler := voucher.NewHandler(voucherSrv)
-	voucherOrderRepo := voucherorder.NewRepository(db)
-	voucherOrderSrv := voucherorder.NewService(voucherOrderRepo, seckillVoucherRepo, rdb, idgen.NewRedisIDWorker(rdb.(*redis.Client)))
-	voucherOrderSrv.Start()
-	voucherOrderHandler := voucherorder.NewHandler(voucherOrderSrv)
-
-	uploadSrv := upload.NewService()
-	uploadHandler := upload.NewHandler(uploadSrv)
-
-	followRepo := follow.NewRepository(db)
-	followSrv := follow.NewService(followRepo, userSrv, rdb)
-	followHandler := follow.NewHandler(followSrv)
-
-	blogRepo := blog.NewRepository(db)
-	blogSrv := blog.NewService(blogRepo, rdb, userSrv, followRepo)
-	blogHandler := blog.NewHandler(blogSrv)
-
 	api := r.Group("/api")
 	{
-		api.POST("/login/password", userHandler.Login)
-		api.POST("/login/code", userHandler.CodeLogin)
-		api.POST("/code", userHandler.SendCode)
+		user := api.Group("/user")
+		{
+			user.POST("/login/password", userHandler.Login)
+			user.POST("/login/code", userHandler.CodeLogin)
+			user.POST("/code", userHandler.SendCode)
+			user.GET("/:id", userHandler.GetUserByID)
+			user.GET("/info/:id", userHandler.GetUserInfoByID)
+		}
 
 		shop := api.Group("/shops")
 		{
 			shop.POST("", shopHandler.CreateShop)
 			shop.GET("/:id", shopHandler.GetShopByID)
 			shop.PUT("/:id", shopHandler.UpdateShop)
-			shop.GET("/type/:type_id", shopHandler.GetShopsByType)
-			shop.GET("/name/:name", shopHandler.GetShopsByName)
+			shop.GET("/of/type", shopHandler.GetShopsByType)
+			shop.GET("/of/name", shopHandler.GetShopsByName)
 		}
 
 		voucher := api.Group("/voucher")
@@ -96,10 +82,18 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable) *gin.Engine {
 		{
 			auth.POST("/seckill/:voucherId", voucherOrderHandler.SeckillVoucher)
 
+			auth.GET("/user/me", userHandler.GetSelf)
+
+			user := auth.Group("/user")
+			{
+				user.GET("/sign/count", userHandler.SignCount)
+				user.PUT("/sign", userHandler.Sign)
+			}
+
 			blog := auth.Group("/blog")
 			{
 				blog.POST("", blogHandler.CreateBlog)
-				api.GET("/blog/:id", blogHandler.GetBlogByID)
+				blog.GET("/:id", blogHandler.GetBlogByID)
 				blog.GET("/of/me", blogHandler.GetBlogSelf)
 				blog.PUT("/like/:id", blogHandler.LikeBlog)
 				blog.GET("/of/user/:id", blogHandler.GetBlogByUserID)

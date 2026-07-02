@@ -16,10 +16,10 @@ const (
 )
 
 type RedisIDWorker struct {
-	client *redis.Client
+	client redis.Cmdable
 }
 
-func NewRedisIDWorker(client *redis.Client) *RedisIDWorker {
+func NewRedisIDWorker(client redis.Cmdable) *RedisIDWorker {
 	return &RedisIDWorker{client: client}
 }
 
