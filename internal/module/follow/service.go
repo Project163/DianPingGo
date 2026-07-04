@@ -73,7 +73,7 @@ func NewService(repo FollowRepository, userSrv UserService, rdb redis.Cmdable) *
 // Follow 关注用户
 func (s *Service) Follow(ctx context.Context, follow *Follow) error {
 	if follow.UserID == follow.FollowUserID {
-		return errmsg.NewError(errmsg.ErrInvalidParam, fmt.Errorf("cannot follow yourself"))
+		return errmsg.NewError(errmsg.ErrFollowYourself, fmt.Errorf("cannot follow yourself"))
 	}
 
 	_, err := s.repo.Follow(ctx, follow.UserID, follow.FollowUserID)
@@ -88,7 +88,7 @@ func (s *Service) Follow(ctx context.Context, follow *Follow) error {
 		if err = s.rdb.Del(ctx, key, loadKey).Err(); err != nil {
 			return errmsg.NewError(errmsg.ErrInternalSec, err)
 		}
-		return nil
+		return err
 	}
 	// // 更新缓存
 	// // 缓存冷（loadedKey不存在）时，直接删除缓存，不因为写操作而重建
@@ -137,7 +137,7 @@ func (s *Service) Unfollow(ctx context.Context, follow *Follow) error {
 		if err = s.rdb.Del(ctx, key, loadKey).Err(); err != nil {
 			return errmsg.NewError(errmsg.ErrInternalSec, err)
 		}
-		return nil
+		return err
 	}
 	// loaded, err := s.rdb.Exists(ctx, loadKey).Result()
 	// if err != nil {

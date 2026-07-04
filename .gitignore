@@ -11,3 +11,6 @@ app
 # OS
 .DS_Store
 Thumbs.db
+
+# Doc
+doc/

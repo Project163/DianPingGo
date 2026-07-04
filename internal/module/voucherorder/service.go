@@ -273,6 +273,7 @@ func (s *Service) processMessage(ctx context.Context, msgID string, order *Vouch
 		// 处理成功，确认消息
 		s.rdb.XAck(ctx, StreamOrderKey, StreamGroupName, msgID)
 		s.rdb.HDel(ctx, RetryKey, msgID)
+		return
 	}
 
 	// 判断是否为永久性错误，如果是，则将消息移动到死信队列，并确认消息
@@ -305,11 +306,11 @@ func isPermanentError(err error) bool {
 	// 使用 errors.As 检查错误类型，如果是自定义错误类型，则根据具体的错误类型判断是否为永久性错误
 	if errors.As(err, &ce) {
 		switch {
-		case ce == &errmsg.ErrNoStock:
+		case ce.BusinessCode == errmsg.ErrNoStock.BusinessCode:
 			return true
-		case ce == &errmsg.ErrRepeatedOrder:
+		case ce.BusinessCode == errmsg.ErrRepeatedOrder.BusinessCode:
 			return true
-		case ce == &errmsg.ErrInvalidParam:
+		case ce.BusinessCode == errmsg.ErrInvalidParam.BusinessCode:
 			return true
 		default:
 			return false
@@ -358,5 +359,9 @@ func strVal(v interface{}) string {
 	if v == nil {
 		return ""
 	}
-	return v.(string)
+	vstr, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return vstr
 }

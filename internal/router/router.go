@@ -6,6 +6,7 @@ import (
 	"dianping/internal/module/blog"
 	"dianping/internal/module/follow"
 	"dianping/internal/module/shop"
+	"dianping/internal/module/shoptype"
 	"dianping/internal/module/upload"
 	"dianping/internal/module/user"
 	"dianping/internal/module/voucher"
@@ -20,6 +21,7 @@ import (
 func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 	userHandler *user.Handler,
 	shopHandler *shop.Handler,
+	shopTypeHandler *shoptype.Handler,
 	voucherHandler *voucher.Handler,
 	voucherOrderHandler *voucherorder.Handler,
 	uploadHandler *upload.Handler,
@@ -59,6 +61,12 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 			shop.PUT("/:id", shopHandler.UpdateShop)
 			shop.GET("/of/type", shopHandler.GetShopsByType)
 			shop.GET("/of/name", shopHandler.GetShopsByName)
+		}
+
+		shoptype := api.Group("/shop-type")
+		{
+			shoptype.GET("/:id", shopTypeHandler.GetShopTypeByID)
+			shoptype.GET("/list", shopTypeHandler.GetShopTypeAll)
 		}
 
 		voucher := api.Group("/voucher")
@@ -104,6 +112,8 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 				follow.POST("/:id/:isFollow", followHandler.Follow)
 				follow.GET("/or/not/:id", followHandler.IsFollowed)
 				follow.GET("/common/:id", followHandler.FollowCommon)
+				follow.GET("/followed", followHandler.ListFollowedUserIDs)
+				follow.GET("/follower", followHandler.ListFollowerUserIDs)
 			}
 		}
 	}

@@ -132,3 +132,45 @@ func (h *Handler) FollowCommon(ctx *gin.Context) {
 	}
 	response.OK(ctx, commonUsers)
 }
+
+// ListFollowedUserIDs 获取指定用户的所有关注用户ID
+func (h *Handler) ListFollowedUserIDs(ctx *gin.Context) {
+	userIDAny, exists := ctx.Get(middleware.CtxUserIDKey)
+	if !exists {
+		response.Fail(ctx, &errmsg.ErrUnauthorized)
+		return
+	}
+	userID, ok := userIDAny.(uint64)
+	if !ok {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, fmt.Errorf("invalid userID")))
+		return
+	}
+
+	followedIDs, err := h.srv.ListFollowedUserIDs(ctx, userID)
+	if err != nil {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInternalSec, err))
+		return
+	}
+	response.OK(ctx, followedIDs)
+}
+
+// ListFollowerUserIDs 获取指定用户的所有粉丝用户ID
+func (h *Handler) ListFollowerUserIDs(ctx *gin.Context) {
+	userIDAny, exists := ctx.Get(middleware.CtxUserIDKey)
+	if !exists {
+		response.Fail(ctx, &errmsg.ErrUnauthorized)
+		return
+	}
+	userID, ok := userIDAny.(uint64)
+	if !ok {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, fmt.Errorf("invalid userID")))
+		return
+	}
+
+	followedIDs, err := h.srv.ListFollowerUserIDs(ctx, userID)
+	if err != nil {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInternalSec, err))
+		return
+	}
+	response.OK(ctx, followedIDs)
+}
