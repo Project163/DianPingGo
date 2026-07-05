@@ -15,11 +15,19 @@ var RedisClient *redis.Client
 // InitRedis 初始化Redis连接
 func InitRedis(cfg config.RedisConfig) (*redis.Client, error) {
 	rdb := redis.NewClient(&redis.Options{
-		Addr:         cfg.Addr,
-		Password:     cfg.Password,
-		DB:           cfg.DB,
-		PoolSize:     20,
-		MinIdleConns: 5,
+		Addr:            cfg.Addr,
+		Password:        cfg.Password,
+		DB:              cfg.DB,
+		PoolSize:        cfg.PoolSize,
+		MinIdleConns:    cfg.MinIdleConns,
+		ConnMaxLifetime: time.Duration(cfg.ConnMaxLifetime) * time.Second,
+		ConnMaxIdleTime: time.Duration(cfg.ConnMaxIdleTime) * time.Second,
+
+		DialTimeout:  time.Duration(cfg.DialTimeout) * time.Second,
+		ReadTimeout:  time.Duration(cfg.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second,
+		PoolTimeout:  time.Duration(cfg.PoolTimeout) * time.Second,
+		MaxRetries:   cfg.MaxRetries,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

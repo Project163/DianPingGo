@@ -44,7 +44,7 @@ func (h *Handler) Follow(ctx *gin.Context) {
 		return
 	}
 
-	isFollowStr := ctx.Param("isFollow")
+	isFollowStr := ctx.Param("is_follow")
 	isFollow, err := strconv.ParseBool(isFollowStr)
 	if err != nil {
 		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, fmt.Errorf("invalid isFollow")))
@@ -98,7 +98,7 @@ func (h *Handler) IsFollowed(ctx *gin.Context) {
 		response.Fail(ctx, errmsg.NewError(errmsg.ErrInternalSec, err))
 		return
 	}
-	response.OK(ctx, gin.H{"isFollowed": isFollowed})
+	response.OK(ctx, gin.H{"is_followed": isFollowed})
 }
 
 // FollowCommon 处理查询共同关注请求，接受用户ID作为参数，从ctx中获取当前用户ID

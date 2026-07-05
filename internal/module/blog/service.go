@@ -318,7 +318,7 @@ func (s *Service) populateBlogUser(ctx context.Context, blog *Blog) {
 		return
 	}
 	blog.Icon = user.Icon
-	blog.Name = user.NickName
+	blog.Name = user.Nickname
 }
 
 // populateBlogs 填充多个博文的作者信息和当前用户的点赞状态
@@ -345,7 +345,7 @@ func (s *Service) populateBlogs(ctx context.Context, blogs []Blog, currentUserID
 			for i := range blogs {
 				if user, ok := userMap[blogs[i].UserId]; ok {
 					blogs[i].Icon = user.Icon
-					blogs[i].Name = user.NickName
+					blogs[i].Name = user.Nickname
 				}
 			}
 		}

@@ -14,7 +14,7 @@ var ErrDataNotFound = errors.New("cache: data not found in database")
 
 type RedisData struct {
 	Data     json.RawMessage `json:"data"`
-	ExpireAt time.Time       `json:"expireAt"`
+	ExpireAt time.Time       `json:"expire_at"`
 }
 
 type CacheClient struct {

@@ -74,7 +74,7 @@ func (h *Handler) CreateSeckillVoucher(ctx *gin.Context) {
 
 // GetVoucherByShopID 根据商户ID查询优惠券列表
 func (h *Handler) GetVoucherByShopID(ctx *gin.Context) {
-	shopIDStr := ctx.Param("shopid")
+	shopIDStr := ctx.Param("shop_id")
 	shopID, err := strconv.ParseUint(shopIDStr, 10, 64)
 	if err != nil {
 		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))

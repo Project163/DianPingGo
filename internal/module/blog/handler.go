@@ -178,7 +178,7 @@ func (h *Handler) GetBlogOfFollow(ctx *gin.Context) {
 		response.Fail(ctx, &errmsg.ErrUnauthorized)
 		return
 	}
-	lastIDStr := ctx.DefaultQuery("lastId", "0")
+	lastIDStr := ctx.DefaultQuery("last_id", "0")
 	lastID, err := strconv.ParseInt(lastIDStr, 10, 64)
 	if err != nil || lastID < 1 {
 		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))

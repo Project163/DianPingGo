@@ -86,9 +86,9 @@ func (h *Handler) UpdateShop(ctx *gin.Context) {
 
 // GetShopsByType 获取商户列表
 func (h *Handler) GetShopsByType(ctx *gin.Context) {
-	typeIDStr := ctx.Query("typeId")
+	typeIDStr := ctx.Query("type_id")
 	if typeIDStr == "" {
-		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, fmt.Errorf("typeId is required")))
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, fmt.Errorf("type_id is required")))
 		return
 	}
 	typeID, err := strconv.ParseUint(typeIDStr, 10, 64)

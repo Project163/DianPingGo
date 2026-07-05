@@ -7,7 +7,7 @@ type User struct {
 	ID         uint64    `gorm:"column:id;primaryKey" json:"id"`
 	Phone      string    `gorm:"column:phone;unique" json:"-"`
 	Password   string    `gorm:"column:password" json:"-"`
-	NickName   string    `gorm:"column:nickname" json:"nickname"`
+	Nickname   string    `gorm:"column:nickname" json:"nickname"`
 	Icon       string    `gorm:"column:icon" json:"icon"`
 	CreateTime time.Time `gorm:"autoCreateTime" json:"-"`
 	UpdateTime time.Time `gorm:"autoUpdateTime" json:"-"`

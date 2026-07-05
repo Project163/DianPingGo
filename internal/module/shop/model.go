@@ -6,17 +6,17 @@ import "time"
 type Shop struct {
 	ID         uint64    `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
 	Name       string    `gorm:"column:name" json:"name"`
-	TypeID     uint64    `gorm:"column:type_id" json:"typeId"`
+	TypeID     uint64    `gorm:"column:type_id" json:"type_id"`
 	Images     string    `gorm:"column:images" json:"images"`
 	Area       string    `gorm:"column:area" json:"area"`
 	Address    string    `gorm:"column:address" json:"address"`
 	Longitude  float64   `gorm:"column:x" json:"longitude"`
 	Latitude   float64   `gorm:"column:y" json:"latitude"`
-	AvgPrice   uint64    `gorm:"column:avg_price" json:"avgPrice"`
+	AvgPrice   uint64    `gorm:"column:avg_price" json:"avg_price"`
 	Sold       uint      `gorm:"column:sold" json:"sold"`
-	Comments   uint      `gorm:"column:comment" json:"comment"`
+	Comments   uint      `gorm:"column:comment" json:"comments"`
 	Score      uint      `gorm:"column:score" json:"score"`
-	OpenTime   string    `gorm:"column:open_hours" json:"openTime"`
+	OpenTime   string    `gorm:"column:open_hours" json:"open_time"`
 	CreateTime time.Time `gorm:"column:create_time;autoCreateTime" json:"-"`
 	UpdateTime time.Time `gorm:"column:update_time;autoUpdateTime" json:"-"`
 

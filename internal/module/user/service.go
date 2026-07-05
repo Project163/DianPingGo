@@ -84,14 +84,14 @@ func (s *Service) Login(ctx context.Context, req *LoginReq) (*LoginResp, error) 
 	// 将用户信息存储在Redis中，key为BizUserToken + tokenStr，value为用户ID、昵称和头像URL等信息
 	userDTO := &UserDTO{
 		ID:       u.ID,
-		NickName: u.NickName,
+		Nickname: u.Nickname,
 		Icon:     u.Icon,
 	}
 	IDStr := strconv.FormatUint(userDTO.ID, 10)
 	// HSet支持一次设置多个字段，构造一个map[string]interface{}来存储用户信息
 	userMap := map[string]interface{}{
 		"id":       IDStr,
-		"nickname": userDTO.NickName,
+		"nickname": userDTO.Nickname,
 		"icon":     userDTO.Icon,
 	}
 	// 使用管道一次执行HSet和Expire
@@ -108,7 +108,7 @@ func (s *Service) Login(ctx context.Context, req *LoginReq) (*LoginResp, error) 
 
 	return &LoginResp{
 		Token:    tokenStr,
-		NickName: u.NickName,
+		Nickname: u.Nickname,
 	}, nil
 }
 
@@ -136,7 +136,7 @@ func (s *Service) CodeLogin(ctx context.Context, req *CodeLoginReq) (*LoginResp,
 		u, err = s.Register(ctx, &CreateUserReq{
 			Phone:    phone,
 			Password: "",
-			NickName: "",
+			Nickname: "",
 		})
 		if err != nil {
 			return nil, err
@@ -158,7 +158,7 @@ func (s *Service) CodeLogin(ctx context.Context, req *CodeLoginReq) (*LoginResp,
 
 	userDTO := &UserDTO{
 		ID:       u.ID,
-		NickName: u.NickName,
+		Nickname: u.Nickname,
 		Icon:     u.Icon,
 	}
 
@@ -166,7 +166,7 @@ func (s *Service) CodeLogin(ctx context.Context, req *CodeLoginReq) (*LoginResp,
 
 	userMap := map[string]interface{}{
 		"id":       IDStr,
-		"nickname": userDTO.NickName,
+		"nickname": userDTO.Nickname,
 		"icon":     userDTO.Icon,
 	}
 
@@ -184,7 +184,7 @@ func (s *Service) CodeLogin(ctx context.Context, req *CodeLoginReq) (*LoginResp,
 	s.rdb.Del(ctx, codeKey)
 	return &LoginResp{
 		Token:    tokenStr,
-		NickName: u.NickName,
+		Nickname: u.Nickname,
 	}, nil
 }
 
@@ -227,7 +227,7 @@ func (s *Service) SendCode(ctx context.Context, req *SendCodeReq) (*SendCodeResp
 func (s *Service) Register(ctx context.Context, req *CreateUserReq) (*User, error) {
 	var nickname string
 	// 如果请求中没有提供昵称，则生成一个随机昵称，格式为"user_"加上5个随机字节的十六进制字符串，确保昵称唯一且不易被猜测
-	if req.NickName == "" {
+	if req.Nickname == "" {
 		bytes := make([]byte, 5)
 		if _, err := rand.Read(bytes); err != nil {
 			nickname = fmt.Sprintf("user_%d", time.Now().Unix())
@@ -235,12 +235,12 @@ func (s *Service) Register(ctx context.Context, req *CreateUserReq) (*User, erro
 			nickname = "user_" + hex.EncodeToString(bytes)
 		}
 	} else {
-		nickname = req.NickName
+		nickname = req.Nickname
 	}
 
 	user := &User{
 		Phone:    req.Phone,
-		NickName: nickname,
+		Nickname: nickname,
 	}
 
 	// 如果请求中提供了密码，则对密码进行哈希处理后存储在数据库中，使用bcrypt算法来生成安全的哈希密码
@@ -283,7 +283,7 @@ func (s *Service) GetUserByID(ctx context.Context, userID uint64) (*UserDTO, err
 		}
 		return nil, err
 	}
-	return &UserDTO{ID: user.ID, NickName: user.NickName, Icon: user.Icon}, nil
+	return &UserDTO{ID: user.ID, Nickname: user.Nickname, Icon: user.Icon}, nil
 }
 
 // ListUsersByIDs 根据用户ID列表批量查询用户信息，返回UserDTO列表
@@ -335,7 +335,7 @@ func toUserDTOs(users []User) []UserDTO {
 	for i, user := range users {
 		userDTOs[i] = UserDTO{
 			ID:       user.ID,
-			NickName: user.NickName,
+			Nickname: user.Nickname,
 			Icon:     user.Icon,
 		}
 	}

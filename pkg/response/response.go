@@ -15,7 +15,7 @@ type Response struct {
 	BusinessCode int         `json:"code"`
 	Message      string      `json:"message"`
 	Data         interface{} `json:"data,omitempty"`
-	TraceID      string      `json:"traceId,omitempty"`
+	TraceID      string      `json:"trace_id,omitempty"`
 }
 
 // OK 返回一个成功的响应
@@ -58,7 +58,7 @@ func Fail(ctx *gin.Context, err error) {
 
 // GetTraceID 从Gin上下文中获取TraceID，如果不存在则返回空字符串
 func GetTraceID(ctx *gin.Context) string {
-	traceID, exists := ctx.Get("traceId")
+	traceID, exists := ctx.Get("trace_id")
 	if !exists {
 		return ""
 	}

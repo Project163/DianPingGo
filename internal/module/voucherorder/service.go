@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dianping/internal/module/seckillvoucher"
+	"dianping/internal/tx"
 	"dianping/pkg/errmsg"
 	"dianping/pkg/idgen"
 
@@ -75,6 +76,7 @@ type Service struct {
 	repo        VoucherOrderRepository
 	seckillRepo SeckillVoucherRepository
 	idWorker    *idgen.RedisIDWorker
+	txManager   tx.Manager
 
 	mu      sync.Mutex
 	started bool
@@ -83,12 +85,13 @@ type Service struct {
 	cancel context.CancelFunc
 }
 
-func NewService(repo VoucherOrderRepository, seckillRepo SeckillVoucherRepository, rdb redis.Cmdable, idWorker *idgen.RedisIDWorker) *Service {
+func NewService(repo VoucherOrderRepository, seckillRepo SeckillVoucherRepository, rdb redis.Cmdable, idWorker *idgen.RedisIDWorker, txManager tx.Manager) *Service {
 	return &Service{
 		repo:        repo,
 		seckillRepo: seckillRepo,
 		rdb:         rdb,
 		idWorker:    idWorker,
+		txManager:   txManager,
 	}
 }
 
@@ -151,14 +154,16 @@ func (s *Service) SeckillVoucher(ctx context.Context, voucherID uint64, userID u
 
 // CreateVoucherOrder 在数据库中创建一个新的优惠券订单记录，接受上下文和优惠券订单对象作为参数，返回错误
 func (s *Service) CreateVoucherOrder(ctx context.Context, order *VoucherOrder) error {
-	ok, err := s.seckillRepo.DeductStock(ctx, order.VoucherID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return &errmsg.ErrNoStock
-	}
-	return s.repo.CreateVoucherOrder(ctx, order)
+	return s.txManager.Transaction(ctx, func(ctx context.Context) error {
+		ok, err := s.seckillRepo.DeductStock(ctx, order.VoucherID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return &errmsg.ErrNoStock
+		}
+		return s.repo.CreateVoucherOrder(ctx, order)
+	})
 }
 
 // GetVoucherOrderByID 根据订单ID查询优惠券订单，接受上下文和订单ID作为参数，返回优惠券订单对象和错误
@@ -325,9 +330,9 @@ func (s *Service) moveToDLQ(ctx context.Context, msgID string, order *VoucherOrd
 		Stream: DeadStreamKey,
 		Values: map[string]interface{}{
 			"original_id": msgID,
-			"userId":      order.UserID,
-			"voucherId":   order.VoucherID,
-			"orderId":     order.ID,
+			"user_id":     order.UserID,
+			"voucher_id":  order.VoucherID,
+			"order_id":    order.ID,
 			"error":       err.Error(),
 			"retry_count": retryCount,
 			"moved_at":    time.Now().Unix(),
@@ -340,9 +345,9 @@ func ParseMessage(values map[string]interface{}) *VoucherOrder {
 	if values == nil {
 		return nil
 	}
-	vid, _ := strconv.ParseUint(strVal(values["voucherId"]), 10, 64)
-	uid, _ := strconv.ParseUint(strVal(values["userId"]), 10, 64)
-	oid, _ := strconv.ParseUint(strVal(values["orderId"]), 10, 64)
+	vid, _ := strconv.ParseUint(strVal(values["voucher_id"]), 10, 64)
+	uid, _ := strconv.ParseUint(strVal(values["user_id"]), 10, 64)
+	oid, _ := strconv.ParseUint(strVal(values["order_id"]), 10, 64)
 
 	if vid == 0 || uid == 0 || oid == 0 {
 		return nil

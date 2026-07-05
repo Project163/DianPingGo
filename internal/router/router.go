@@ -82,8 +82,12 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 			upload.DELETE("/blog", uploadHandler.DeleteImage)
 		}
 
-		api.GET("/blog/hot", blogHandler.GetBlogsHot)
-		api.GET("/blog/likes/:id", blogHandler.GetBlogLikesByID)
+		blog := api.Group("/blog")
+		{
+			blog.GET("/blog/hot", blogHandler.GetBlogsHot)
+			blog.GET("/blog/likes/:id", blogHandler.GetBlogLikesByID)
+			blog.GET("/:id", blogHandler.GetBlogByID)
+		}
 
 		auth := api.Group("")
 		auth.Use(middleware.AuthMiddleware(rdb))
@@ -101,7 +105,6 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 			blog := auth.Group("/blog")
 			{
 				blog.POST("", blogHandler.CreateBlog)
-				blog.GET("/:id", blogHandler.GetBlogByID)
 				blog.GET("/of/me", blogHandler.GetBlogSelf)
 				blog.PUT("/like/:id", blogHandler.LikeBlog)
 				blog.GET("/of/user/:id", blogHandler.GetBlogByUserID)

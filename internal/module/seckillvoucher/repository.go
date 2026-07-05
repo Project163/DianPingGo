@@ -2,6 +2,7 @@ package seckillvoucher
 
 import (
 	"context"
+	"dianping/internal/tx"
 
 	"gorm.io/gorm"
 )
@@ -16,13 +17,20 @@ func NewRepository(db *gorm.DB) *Repository {
 	}
 }
 
+func (r *Repository) getDB(ctx context.Context) *gorm.DB {
+	if txDB := tx.FromContext(ctx); txDB != nil {
+		return txDB.WithContext(ctx)
+	}
+	return r.db.WithContext(ctx)
+}
+
 func (r *Repository) CreateSeckillVoucher(ctx context.Context, sv *SeckillVoucher) error {
-	return r.db.WithContext(ctx).Create(sv).Error
+	return r.getDB(ctx).Create(sv).Error
 }
 
 func (r *Repository) GetSeckillVoucherByID(ctx context.Context, voucherID uint64) (*SeckillVoucher, error) {
 	var sv SeckillVoucher
-	err := r.db.WithContext(ctx).Where("voucher_id = ?", voucherID).First(&sv).Error
+	err := r.getDB(ctx).Where("voucher_id = ?", voucherID).First(&sv).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
@@ -39,7 +47,7 @@ func (r *Repository) GetSeckillVoucherByID(ctx context.Context, voucherID uint64
 // 但问题在于悲观锁在极大的高并发下会导致大量的阻塞问题
 // 所以前面有一层Redis的Lua脚本来保证库存扣减的原子性，避免了悲观锁的阻塞问题
 func (r *Repository) DeductStock(ctx context.Context, voucherID uint64) (bool, error) {
-	result := r.db.WithContext(ctx).Model(&SeckillVoucher{}).
+	result := r.getDB(ctx).Model(&SeckillVoucher{}).
 		Where("voucher_id = ? AND stock > 0", voucherID).
 		Update("stock", gorm.Expr("stock - ?", 1))
 	if result.Error != nil {

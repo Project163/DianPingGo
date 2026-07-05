@@ -15,6 +15,7 @@ import (
 	"dianping/internal/module/voucher"
 	"dianping/internal/module/voucherorder"
 	"dianping/internal/router"
+	"dianping/internal/tx"
 	"dianping/pkg/idgen"
 	"dianping/pkg/validator"
 	"fmt"
@@ -61,6 +62,7 @@ func NewApp(configPath string) (*App, error) {
 // Start 启动HTTP服务器，监听指定端口，并处理系统中断信号以关闭服务器
 func (a *App) Start() error {
 	validator.InitValidator()
+	txManager := tx.NewGormManager(a.db)
 
 	userInfoRepo := userinfo.NewRepository(a.db)
 	userInfoSrv := userinfo.NewService(userInfoRepo)
@@ -83,7 +85,7 @@ func (a *App) Start() error {
 	voucherHandler := voucher.NewHandler(voucherSrv)
 
 	voucherOrderRepo := voucherorder.NewRepository(a.db)
-	a.voucherOrderSrv = voucherorder.NewService(voucherOrderRepo, seckillVoucherRepo, a.rdb, idgen.NewRedisIDWorker(a.rdb))
+	a.voucherOrderSrv = voucherorder.NewService(voucherOrderRepo, seckillVoucherRepo, a.rdb, idgen.NewRedisIDWorker(a.rdb), txManager)
 	voucherOrderHandler := voucherorder.NewHandler(a.voucherOrderSrv)
 
 	uploadSrv := upload.NewService()
@@ -141,8 +143,8 @@ func (a *App) Start() error {
 		a.voucherOrderSrv.Stop()
 	}
 
-	infra.CloseMySQL()
-	infra.CloseRedis()
+	defer infra.CloseMySQL()
+	defer infra.CloseRedis()
 
 	return nil
 }
