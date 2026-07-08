@@ -4,6 +4,7 @@ import (
 	"context"
 	"dianping/internal/module/user"
 	"dianping/pkg/errmsg"
+	"fmt"
 	"log"
 	"sort"
 	"strconv"
@@ -249,11 +250,15 @@ func (s *Service) QueryBlogsOfFollow(ctx context.Context, currentUserID uint64, 
 	ids := make([]uint64, len(tuples))
 	var minTime int64
 	var os int64 = 1
-	// TODO: offset有计算漏洞
-	// 如果上一页结尾有2条时间戳为X的数据，这一页开头又有2条时间戳为X的数据
-	// os会在这一页被错误地重置为1或仅从本页开始数，导致下一页查询时漏掉或重复读数据。
 	for i, t := range tuples {
-		ids[i], _ = strconv.ParseUint(t.Member.(string), 10, 64)
+		tStr, ok := t.Member.(string)
+		if !ok {
+			return nil, fmt.Errorf("invaild ids")
+		}
+		ids[i], err = strconv.ParseUint(tStr, 10, 64)
+		if err != nil {
+			return nil, err
+		}
 		ts := int64(t.Score)
 		if ts == minTime {
 			os++
@@ -262,6 +267,11 @@ func (s *Service) QueryBlogsOfFollow(ctx context.Context, currentUserID uint64, 
 			os = 1
 		}
 	}
+	// 如果最小时间戳等于max，说明还有更多的博文需要分页查询，因此需要增加偏移量
+	if minTime == max {
+		os += offset
+	}
+
 	// 根据Redis中获取的博文ID顺序查询数据库中的博文信息
 	blogs, err := s.repo.ListBlogsByIDs(ctx, ids)
 	if err != nil {
@@ -318,7 +328,7 @@ func (s *Service) populateBlogUser(ctx context.Context, blog *Blog) {
 		return
 	}
 	blog.Icon = user.Icon
-	blog.Name = user.Nickname
+	blog.Name = user.NickName
 }
 
 // populateBlogs 填充多个博文的作者信息和当前用户的点赞状态
@@ -345,7 +355,7 @@ func (s *Service) populateBlogs(ctx context.Context, blogs []Blog, currentUserID
 			for i := range blogs {
 				if user, ok := userMap[blogs[i].UserId]; ok {
 					blogs[i].Icon = user.Icon
-					blogs[i].Name = user.Nickname
+					blogs[i].Name = user.NickName
 				}
 			}
 		}

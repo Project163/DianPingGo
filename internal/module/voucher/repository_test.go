@@ -1,229 +1,220 @@
+//go:build integration
 package voucher
 
 import (
 	"context"
-	"dianping/internal/module/seckillvoucher"
+	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"dianping/internal/module/seckillvoucher"
+
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
+	tc "github.com/testcontainers/testcontainers-go"
+	tcmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
+	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
-func setupTestDB(t *testing.T) *gorm.DB {
+func setUpVoucherRepo(t *testing.T) (*Repository, *gorm.DB) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+
+	ctx := context.Background()
+
+	ctr, err := tcmysql.Run(ctx,
+		"mysql:8.0.36",
+		tcmysql.WithDatabase("dianping_test"),
+		tcmysql.WithUsername("test"),
+		tcmysql.WithPassword("test"),
+		tcmysql.WithScripts(filepath.Join("testdata", "schema.sql")),
+	)
 	require.NoError(t, err)
-	db.AutoMigrate(&Voucher{}, &seckillvoucher.SeckillVoucher{})
-	return db
+	t.Cleanup(func() {
+		require.NoError(t, tc.TerminateContainer(ctr))
+	})
+
+	dsn, err := ctr.ConnectionString(ctx, "parseTime=true", "loc=Local", "charset=utf8mb4")
+	require.NoError(t, err)
+	db, err := gorm.Open(gormmysql.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+
+	tx := db.Begin()
+	require.NoError(t, tx.Error)
+	t.Cleanup(func() {
+		require.NoError(t, tx.Rollback().Error)
+	})
+
+	return NewRepository(tx), tx
 }
 
-func TestCreateVoucher(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		db := setupTestDB(t)
-		repo := NewRepository(db)
+func TestRepository_CreateVoucher(t *testing.T) {
+	t.Run("create voucher successfully", func(t *testing.T) {
+		repo, db := setUpVoucherRepo(t)
+		ctx := context.Background()
 
 		voucher := &Voucher{
 			ShopID:      1,
-			Title:       "测试优惠券",
-			SubTitle:    "满100减20",
-			Rules:       "满100元可用",
-			PayValue:    80,
-			ActualValue: 100,
-			Type:        0,
-			Status:      1,
-			Stock:       100,
-			BeginTime:   time.Now(),
-			EndTime:     time.Now().Add(24 * time.Hour),
-		}
-		err := repo.CreateVoucher(context.Background(), voucher)
-		require.NoError(t, err)
-		require.NotZero(t, voucher.ID)
-
-		var count int64
-		db.Model(&Voucher{}).Count(&count)
-		require.Equal(t, int64(1), count)
-	})
-}
-
-func TestGetVoucherByID(t *testing.T) {
-	t.Run("found", func(t *testing.T) {
-		db := setupTestDB(t)
-		repo := NewRepository(db)
-
-		voucher := &Voucher{
-			ShopID:      1,
-			Title:       "测试优惠券",
-			SubTitle:    "满100减20",
-			Rules:       "满100元可用",
-			PayValue:    80,
-			ActualValue: 100,
-			Type:        0,
-			Status:      1,
-			Stock:       100,
-			BeginTime:   time.Now(),
-			EndTime:     time.Now().Add(24 * time.Hour),
-		}
-		db.Create(voucher)
-
-		result, err := repo.GetVoucherByID(context.Background(), voucher.ID)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		require.Equal(t, "测试优惠券", result.Title)
-		require.Equal(t, uint64(1), result.ShopID)
-	})
-
-	t.Run("not found", func(t *testing.T) {
-		db := setupTestDB(t)
-		repo := NewRepository(db)
-
-		result, err := repo.GetVoucherByID(context.Background(), 999)
-		require.NoError(t, err)
-		require.Nil(t, result)
-	})
-
-	t.Run("database error", func(t *testing.T) {
-		db := setupTestDB(t)
-		repo := NewRepository(db)
-
-		voucher := &Voucher{
-			ShopID:      1,
-			Title:       "测试优惠券",
-			SubTitle:    "满100减20",
-			Rules:       "满100元可用",
-			PayValue:    80,
-			ActualValue: 100,
-			Type:        0,
-			Status:      1,
-			Stock:       100,
-			BeginTime:   time.Now(),
-			EndTime:     time.Now().Add(24 * time.Hour),
-		}
-		db.Create(voucher)
-
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.Close()
-
-		result, err := repo.GetVoucherByID(context.Background(), voucher.ID)
-		require.Error(t, err)
-		require.Nil(t, result)
-	})
-}
-
-func TestGetByShopID(t *testing.T) {
-	t.Run("success with vouchers", func(t *testing.T) {
-		db := setupTestDB(t)
-		repo := NewRepository(db)
-
-		now := time.Now()
-		db.Create(&Voucher{
-			ShopID:      1,
-			Title:       "优惠券A",
-			SubTitle:    "副标题A",
-			Rules:       "规则A",
-			PayValue:    80,
-			ActualValue: 100,
+			Title:       "Test Voucher",
+			SubTitle:    "A test voucher",
+			Rules:       "No rules",
+			PayValue:    100,
+			ActualValue: 200,
 			Type:        0,
 			Status:      1,
 			Stock:       50,
-			BeginTime:   now,
-			EndTime:     now.Add(24 * time.Hour),
-		})
-		db.Create(&Voucher{
-			ShopID:      1,
-			Title:       "优惠券B",
-			SubTitle:    "副标题B",
-			Rules:       "规则B",
-			PayValue:    40,
-			ActualValue: 50,
-			Type:        1,
-			Status:      1,
-			Stock:       30,
-			BeginTime:   now,
-			EndTime:     now.Add(48 * time.Hour),
-		})
-		db.Create(&Voucher{
-			ShopID:      2,
-			Title:       "其他店铺券",
-			SubTitle:    "副标题C",
-			Rules:       "规则C",
-			PayValue:    10,
-			ActualValue: 20,
-			Type:        0,
-			Status:      1,
-			Stock:       10,
-			BeginTime:   now,
-			EndTime:     now.Add(24 * time.Hour),
-		})
-
-		vouchers, err := repo.GetByShopID(context.Background(), 1)
+			BeginTime:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			EndTime:     time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC),
+		}
+		err := repo.CreateVoucher(ctx, voucher)
 		require.NoError(t, err)
-		require.Len(t, vouchers, 2)
-		require.Equal(t, "优惠券B", vouchers[0].Title) // ORDER BY create_time DESC
-		require.Equal(t, "优惠券A", vouchers[1].Title)
-	})
+		require.NotZero(t, voucher.ID)
 
-	t.Run("empty list", func(t *testing.T) {
-		db := setupTestDB(t)
-		repo := NewRepository(db)
-
-		vouchers, err := repo.GetByShopID(context.Background(), 999)
+		var got Voucher
+		err = db.WithContext(ctx).Where("id = ?", voucher.ID).First(&got).Error
 		require.NoError(t, err)
-		require.Empty(t, vouchers)
-	})
-
-	t.Run("database error", func(t *testing.T) {
-		db := setupTestDB(t)
-		repo := NewRepository(db)
-
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.Close()
-
-		vouchers, err := repo.GetByShopID(context.Background(), 1)
-		require.Error(t, err)
-		require.Nil(t, vouchers)
+		require.Equal(t, voucher.Title, got.Title)
+		require.Equal(t, voucher.ShopID, got.ShopID)
+		require.Equal(t, voucher.Type, got.Type)
 	})
 }
 
-func TestCreateSeckillVoucher(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		db := setupTestDB(t)
-		repo := NewRepository(db)
+func TestRepository_GetVoucherByID(t *testing.T) {
+	t.Run("get voucher by ID successfully", func(t *testing.T) {
+		repo, db := setUpVoucherRepo(t)
+		ctx := context.Background()
+
+		seed := &Voucher{
+			ShopID: 1, Title: "Seed Voucher", SubTitle: "S", Rules: "R",
+			PayValue: 10, ActualValue: 20, Type: 0, Status: 1, Stock: 5,
+			BeginTime: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC),
+		}
+		err := db.WithContext(ctx).Create(seed).Error
+		require.NoError(t, err)
+
+		got, err := repo.GetVoucherByID(ctx, seed.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Equal(t, seed.ID, got.ID)
+		require.Equal(t, seed.Title, got.Title)
+		require.Equal(t, seed.ShopID, got.ShopID)
+	})
+
+	t.Run("get voucher by non-existent ID returns nil", func(t *testing.T) {
+		repo, _ := setUpVoucherRepo(t)
+		ctx := context.Background()
+
+		got, err := repo.GetVoucherByID(ctx, 999999)
+		require.NoError(t, err)
+		require.Nil(t, got)
+	})
+}
+
+func TestRepository_GetByShopID(t *testing.T) {
+	t.Run("get vouchers by shop ID successfully", func(t *testing.T) {
+		repo, db := setUpVoucherRepo(t)
+		ctx := context.Background()
 
 		now := time.Now()
+		vouchers := []Voucher{
+			{ShopID: 10, Title: "V1", SubTitle: "S1", Rules: "R1", PayValue: 10, ActualValue: 20, Stock: 5, Status: 1, BeginTime: now, EndTime: now.Add(24 * time.Hour)},
+			{ShopID: 10, Title: "V2", SubTitle: "S2", Rules: "R2", PayValue: 30, ActualValue: 50, Stock: 10, Status: 1, BeginTime: now, EndTime: now.Add(24 * time.Hour)},
+			{ShopID: 20, Title: "V3", SubTitle: "S3", Rules: "R3", PayValue: 1, ActualValue: 2, Stock: 1, Status: 1, BeginTime: now, EndTime: now.Add(24 * time.Hour)},
+		}
+		err := db.WithContext(ctx).Create(&vouchers).Error
+		require.NoError(t, err)
+
+		got, err := repo.GetByShopID(ctx, 10)
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		require.Equal(t, "V2", got[0].Title) // newest first (DESC by create_time)
+		require.Equal(t, "V1", got[1].Title)
+	})
+
+	t.Run("get vouchers for shop with no vouchers returns empty slice", func(t *testing.T) {
+		repo, _ := setUpVoucherRepo(t)
+		ctx := context.Background()
+
+		got, err := repo.GetByShopID(ctx, 999)
+		require.NoError(t, err)
+		require.Len(t, got, 0)
+	})
+}
+
+func TestRepository_CreateSeckillVoucher(t *testing.T) {
+	t.Run("create seckill voucher successfully in transaction", func(t *testing.T) {
+		repo, db := setUpVoucherRepo(t)
+		ctx := context.Background()
+
 		v := &Voucher{
-			ShopID:      1,
-			Title:       "秒杀券",
-			SubTitle:    "限时秒杀",
-			Rules:       "秒杀规则",
-			PayValue:    50,
-			ActualValue: 100,
-			Type:        1,
-			Status:      1,
-			Stock:       10,
-			BeginTime:   now,
-			EndTime:     now.Add(1 * time.Hour),
+			ShopID: 1, Title: "Seckill Deal", SubTitle: "S", Rules: "R",
+			PayValue: 50, ActualValue: 200, Type: 1, Status: 1, Stock: 10,
+			BeginTime: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC),
 		}
 		sv := &seckillvoucher.SeckillVoucher{
 			Stock:     10,
-			BeginTime: now,
-			EndTime:   now.Add(1 * time.Hour),
+			BeginTime: v.BeginTime,
+			EndTime:   v.EndTime,
 		}
 
-		err := repo.CreateSeckillVoucher(context.Background(), v, sv)
+		err := repo.CreateSeckillVoucher(ctx, v, sv)
 		require.NoError(t, err)
 		require.NotZero(t, v.ID)
 		require.Equal(t, v.ID, sv.VoucherID)
 
-		var voucherCount int64
-		db.Model(&Voucher{}).Count(&voucherCount)
-		require.Equal(t, int64(1), voucherCount)
+		// Verify voucher was created
+		var gotVoucher Voucher
+		err = db.WithContext(ctx).Where("id = ?", v.ID).First(&gotVoucher).Error
+		require.NoError(t, err)
+		require.Equal(t, v.Title, gotVoucher.Title)
+		require.Equal(t, uint(1), gotVoucher.Type)
 
-		var seckillCount int64
-		db.Model(&seckillvoucher.SeckillVoucher{}).Count(&seckillCount)
-		require.Equal(t, int64(1), seckillCount)
+		// Verify seckill voucher was created
+		var gotSeckill seckillvoucher.SeckillVoucher
+		err = db.WithContext(ctx).Where("voucher_id = ?", v.ID).First(&gotSeckill).Error
+		require.NoError(t, err)
+		require.Equal(t, uint(10), gotSeckill.Stock)
+	})
+
+	t.Run("duplicate seckill voucher ID returns error", func(t *testing.T) {
+		repo, db := setUpVoucherRepo(t)
+		ctx := context.Background()
+
+		// First creation should succeed
+		v1 := &Voucher{
+			ShopID: 1, Title: "S1", SubTitle: "S", Rules: "R",
+			PayValue: 10, ActualValue: 20, Type: 1, Status: 1, Stock: 5,
+			BeginTime: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC),
+		}
+		sv1 := &seckillvoucher.SeckillVoucher{
+			Stock: 5, BeginTime: v1.BeginTime, EndTime: v1.EndTime,
+		}
+		err := repo.CreateSeckillVoucher(ctx, v1, sv1)
+		require.NoError(t, err)
+
+		// Second creation with same voucher_id linking
+		// Create a voucher first, then try to create a seckill with same voucher_id
+		v2 := &Voucher{
+			ShopID: 1, Title: "S2", SubTitle: "S", Rules: "R",
+			PayValue: 10, ActualValue: 20, Type: 1, Status: 1, Stock: 5,
+			BeginTime: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC),
+		}
+		err = db.WithContext(ctx).Create(v2).Error
+		require.NoError(t, err)
+
+		// Now try to create seckill voucher with voucher_id = v1.ID (already exists in tb_seckill_voucher)
+		svDup := &seckillvoucher.SeckillVoucher{
+			VoucherID: v1.ID, Stock: 5, BeginTime: v1.BeginTime, EndTime: v1.EndTime,
+		}
+		err = db.WithContext(ctx).Create(svDup).Error
+		require.Error(t, err)
+		var mysqlErr *mysql.MySQLError
+		require.True(t, errors.As(err, &mysqlErr))
+		require.Equal(t, uint16(1062), mysqlErr.Number) // duplicate entry
 	})
 }

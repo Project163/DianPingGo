@@ -74,6 +74,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 			voucher.POST("/normal", voucherHandler.CreateVoucher)
 			voucher.POST("/seckill", voucherHandler.CreateSeckillVoucher)
 			voucher.GET("/shop/:shopid", voucherHandler.GetVoucherByShopID)
+			voucher.GET("/:id", voucherHandler.GetVoucherByID)
 		}
 
 		upload := api.Group("/upload")
@@ -93,6 +94,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 		auth.Use(middleware.AuthMiddleware(rdb))
 		{
 			auth.POST("/seckill/:voucherId", voucherOrderHandler.SeckillVoucher)
+			auth.GET("/order/:id", voucherOrderHandler.GetVoucherOrderByID)
 
 			auth.GET("/user/me", userHandler.GetSelf)
 
@@ -100,6 +102,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 			{
 				user.GET("/sign/count", userHandler.SignCount)
 				user.PUT("/sign", userHandler.Sign)
+				user.POST("/logout", userHandler.Logout)
 			}
 
 			blog := auth.Group("/blog")

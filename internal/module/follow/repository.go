@@ -2,7 +2,6 @@ package follow
 
 import (
 	"context"
-	"dianping/pkg/errmsg"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -20,9 +19,6 @@ func NewRepository(db *gorm.DB) *Repository {
 
 // Follow 添加关注关系，如果已经存在则不做任何操作
 func (r *Repository) Follow(ctx context.Context, userID, followUserID uint64) (bool, error) {
-	if userID == followUserID {
-		return false, errmsg.NewError(errmsg.ErrFollowYourself, nil)
-	}
 	follow := &Follow{
 		UserID:       userID,
 		FollowUserID: followUserID,
@@ -40,9 +36,6 @@ func (r *Repository) Follow(ctx context.Context, userID, followUserID uint64) (b
 
 // Unfollow 删除关注关系，如果不存在则不做任何操作
 func (r *Repository) Unfollow(ctx context.Context, userID, followUserID uint64) (bool, error) {
-	if userID == followUserID {
-		return false, errmsg.NewError(errmsg.ErrFollowYourself, nil)
-	}
 	result := r.db.WithContext(ctx).
 		Where("user_id = ? AND follow_user_id = ?", userID, followUserID).
 		Delete(&Follow{})

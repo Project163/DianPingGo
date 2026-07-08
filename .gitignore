@@ -8,6 +8,9 @@ app
 # Claude Code
 .claude/
 
+# Codex
+.codex/
+
 # OS
 .DS_Store
 Thumbs.db

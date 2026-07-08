@@ -60,7 +60,7 @@ func (s *Service) CreateSeckillVoucher(ctx context.Context, svoucher *Voucher) (
 	return svoucher.ID, nil
 }
 
-// GetVoucherByID 根据优惠券ID查询优惠券
+// GetVoucherByShopID 根据商户ID查询优惠券列表
 func (s *Service) GetVoucherByShopID(ctx context.Context, shopID uint64) ([]VoucherResp, error) {
 	key := fmt.Sprintf("%s%d", CacheShopVoucherKey, shopID)
 	var vouchers []Voucher
@@ -78,6 +78,39 @@ func (s *Service) GetVoucherByShopID(ctx context.Context, shopID uint64) ([]Vouc
 		return nil, err
 	}
 	return toVoucherRespList(vouchers), nil
+}
+
+func (s *Service) GetVoucherByID(ctx context.Context, id uint64) (*VoucherResp, error) {
+	key := fmt.Sprintf("%s%d", CacheVoucherKey, id)
+	var voucher Voucher
+
+	// 使用缓存控制策略查询优惠券
+	err := s.cache.QueryWithPassThrough(ctx, key, &voucher, CacheVoucherTTL, CacheNullTTL,
+		func() (any, error) {
+			return s.repo.GetVoucherByID(ctx, id)
+		})
+
+	if err != nil {
+		if err == cache.ErrDataNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	voucherResp := &VoucherResp{
+		ID:          voucher.ID,
+		ShopID:      voucher.ShopID,
+		Title:       voucher.Title,
+		SubTitle:    voucher.SubTitle,
+		Rules:       voucher.Rules,
+		PayValue:    voucher.PayValue,
+		ActualValue: voucher.ActualValue,
+		Type:        voucher.Type,
+		Status:      voucher.Status,
+		Stock:       voucher.Stock,
+		BeginTime:   voucher.BeginTime,
+		EndTime:     voucher.EndTime,
+	}
+	return voucherResp, nil
 }
 
 // toVoucherRespList 将 Voucher 切片转换为 VoucherResp 切片

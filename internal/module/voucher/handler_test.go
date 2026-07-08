@@ -1,15 +1,17 @@
 package voucher
 
 import (
+	"bytes"
 	"context"
-	"dianping/internal/module/seckillvoucher"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
+
+	"dianping/internal/module/seckillvoucher"
+	"dianping/pkg/errmsg"
+	"dianping/pkg/validator"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
@@ -17,238 +19,396 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupHandler(t *testing.T) (*Handler, *mockVoucherRepo, *miniredis.Miniredis) {
-	t.Helper()
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	repo := new(mockVoucherRepo)
-	svc := NewService(repo, rdb)
-	return NewHandler(svc), repo, mr
+// mockVoucherRepoForHandler is a mock for VoucherRepository used in handler tests.
+type mockVoucherRepoForHandler struct {
+	createVoucherFunc        func(ctx context.Context, voucher *Voucher) error
+	createSeckillVoucherFunc func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error
+	getVoucherByIDFunc       func(ctx context.Context, id uint64) (*Voucher, error)
+	getByShopIDFunc          func(ctx context.Context, shopID uint64) ([]Voucher, error)
 }
 
-func setupGinContext(method, path string, body any) (*gin.Context, *httptest.ResponseRecorder) {
+func (m *mockVoucherRepoForHandler) CreateVoucher(ctx context.Context, voucher *Voucher) error {
+	if m.createVoucherFunc != nil {
+		return m.createVoucherFunc(ctx, voucher)
+	}
+	return nil
+}
+
+func (m *mockVoucherRepoForHandler) CreateSeckillVoucher(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
+	if m.createSeckillVoucherFunc != nil {
+		return m.createSeckillVoucherFunc(ctx, v, sv)
+	}
+	return nil
+}
+
+func (m *mockVoucherRepoForHandler) GetVoucherByID(ctx context.Context, id uint64) (*Voucher, error) {
+	if m.getVoucherByIDFunc != nil {
+		return m.getVoucherByIDFunc(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *mockVoucherRepoForHandler) GetByShopID(ctx context.Context, shopID uint64) ([]Voucher, error) {
+	if m.getByShopIDFunc != nil {
+		return m.getByShopIDFunc(ctx, shopID)
+	}
+	return nil, nil
+}
+
+// setUpVoucherHandler creates a test gin Engine with voucher handler routes.
+// Uses a real Service backed by a mock repository and miniredis.
+// Returns the Engine, mock repo, and miniredis for test case configuration.
+func setUpVoucherHandler(t *testing.T) (*gin.Engine, *mockVoucherRepoForHandler, *miniredis.Miniredis) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(method, path, nil)
+	validator.InitValidator()
 
-	if body != nil {
-		jsonBytes, _ := json.Marshal(body)
-		c.Request = httptest.NewRequest(method, path, strings.NewReader(string(jsonBytes)))
-		c.Request.Header.Set("Content-Type", "application/json")
-	}
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { require.NoError(t, rdb.Close()) })
 
-	return c, w
+	repo := new(mockVoucherRepoForHandler)
+	svc := NewService(repo, rdb)
+	handler := NewHandler(svc)
+
+	r := gin.New()
+	r.POST("/voucher", handler.CreateVoucher)
+	r.POST("/voucher/seckill", handler.CreateSeckillVoucher)
+	r.GET("/voucher/:id", handler.GetVoucherByID)
+	r.GET("/voucher/shop/:shop_id", handler.GetVoucherByShopID)
+
+	return r, repo, mr
 }
 
-func parseResponse[T any](t *testing.T, w *httptest.ResponseRecorder) T {
+// decodebody decodes the httptest.ResponseRecorder body into a map.
+func decodebody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
-	var resp struct {
-		Success bool   `json:"success"`
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Data    T      `json:"data"`
-	}
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	require.True(t, resp.Success)
-	return resp.Data
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	return body
 }
+
+// =============================================================================
+// CreateVoucher
+// =============================================================================
 
 func TestHandler_CreateVoucher(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		h, repo, _ := setupHandler(t)
-		repo.createVoucherFunc = func(ctx context.Context, v *Voucher) error {
-			v.ID = 100
+	t.Run("create voucher successfully", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.createVoucherFunc = func(ctx context.Context, voucher *Voucher) error {
+			voucher.ID = 10
+			require.Equal(t, uint64(1), voucher.ShopID)
+			require.Equal(t, "Test Voucher", voucher.Title)
+			require.Equal(t, uint(0), voucher.Type)
 			return nil
 		}
 
-		now := time.Now()
-		c, w := setupGinContext(http.MethodPost, "/voucher", CreateVoucherReq{
-			ShopID:      1,
-			Title:       "测试券",
-			SubTitle:    "副标题",
-			Rules:       "规则",
-			PayValue:    80,
-			ActualValue: 100,
-			Type:        0,
-			Stock:       50,
-			BeginTime:   now,
-			EndTime:     now.Add(24 * time.Hour),
-		})
+		reqBody := []byte(`{
+			"shop_id": 1,
+			"title": "Test Voucher",
+			"sub_title": "Test Sub",
+			"rules": "No rules",
+			"pay_value": 100,
+			"actual_value": 200,
+			"type": 0,
+			"stock": 50,
+			"begin_time": "2026-01-01T00:00:00Z",
+			"end_time": "2026-12-31T23:59:59Z"
+		}`)
+		req := httptest.NewRequest(http.MethodPost, "/voucher", bytes.NewBuffer(reqBody))
+		req.Header.Set("Content-Type", "application/json")
 
-		h.CreateVoucher(c)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
 		require.Equal(t, http.StatusOK, w.Code)
-
-		id := parseResponse[float64](t, w)
-		require.Equal(t, float64(100), id)
+		body := decodebody(t, w)
+		require.Equal(t, true, body["success"])
+		require.Equal(t, float64(10), body["data"].(float64))
 	})
 
-	t.Run("invalid json body", func(t *testing.T) {
-		h, _, _ := setupHandler(t)
-		c, w := setupGinContext(http.MethodPost, "/voucher", nil)
-		c.Request = httptest.NewRequest(http.MethodPost, "/voucher", strings.NewReader("invalid json"))
-		c.Request.Header.Set("Content-Type", "application/json")
-
-		h.CreateVoucher(c)
-		require.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("missing required fields", func(t *testing.T) {
-		h, _, _ := setupHandler(t)
-		c, w := setupGinContext(http.MethodPost, "/voucher", map[string]any{
-			"shopId": 1,
-		})
-
-		h.CreateVoucher(c)
-		require.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("service error", func(t *testing.T) {
-		h, repo, _ := setupHandler(t)
-		repo.createVoucherFunc = func(ctx context.Context, v *Voucher) error {
-			return fmt.Errorf("db connection lost")
+	t.Run("create voucher with invalid params", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.createVoucherFunc = func(ctx context.Context, voucher *Voucher) error {
+			t.Fatalf("service should not be called when binding fails")
+			return nil
 		}
 
-		now := time.Now()
-		c, w := setupGinContext(http.MethodPost, "/voucher", CreateVoucherReq{
-			ShopID:      1,
-			Title:       "测试券",
-			SubTitle:    "副标题",
-			Rules:       "规则",
-			PayValue:    80,
-			ActualValue: 100,
-			Type:        0,
-			Stock:       50,
-			BeginTime:   now,
-			EndTime:     now.Add(24 * time.Hour),
-		})
+		reqBody := []byte(`{}`)
+		req := httptest.NewRequest(http.MethodPost, "/voucher", bytes.NewBuffer(reqBody))
+		req.Header.Set("Content-Type", "application/json")
 
-		h.CreateVoucher(c)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		body := decodebody(t, w)
+		require.Equal(t, false, body["success"])
+		require.Equal(t, float64(4001), body["code"].(float64))
+	})
+
+	t.Run("create voucher with service error", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.createVoucherFunc = func(ctx context.Context, voucher *Voucher) error {
+			return &errmsg.ErrInternalSec
+		}
+
+		reqBody := []byte(`{
+			"shop_id": 1,
+			"title": "Test Voucher",
+			"sub_title": "Test Sub",
+			"rules": "No rules",
+			"pay_value": 100,
+			"actual_value": 200,
+			"type": 0,
+			"stock": 50,
+			"begin_time": "2026-01-01T00:00:00Z",
+			"end_time": "2026-12-31T23:59:59Z"
+		}`)
+		req := httptest.NewRequest(http.MethodPost, "/voucher", bytes.NewBuffer(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
 		require.Equal(t, http.StatusInternalServerError, w.Code)
+		body := decodebody(t, w)
+		require.Equal(t, false, body["success"])
 	})
 }
+
+// =============================================================================
+// CreateSeckillVoucher
+// =============================================================================
 
 func TestHandler_CreateSeckillVoucher(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		h, repo, _ := setupHandler(t)
+	t.Run("create seckill voucher successfully", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
 		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
-			v.ID = 200
-			sv.VoucherID = 200
+			v.ID = 20
 			return nil
 		}
 
-		now := time.Now()
-		c, w := setupGinContext(http.MethodPost, "/voucher/seckill", CreateVoucherReq{
-			ShopID:      1,
-			Title:       "秒杀券",
-			SubTitle:    "限时秒杀",
-			Rules:       "秒杀规则",
-			PayValue:    50,
-			ActualValue: 100,
-			Type:        1,
-			Stock:       10,
-			BeginTime:   now,
-			EndTime:     now.Add(1 * time.Hour),
-		})
+		reqBody := []byte(`{
+			"shop_id": 2,
+			"title": "Seckill Deal",
+			"sub_title": "Limited time",
+			"rules": "First come first serve",
+			"pay_value": 50,
+			"actual_value": 150,
+			"type": 1,
+			"stock": 10,
+			"begin_time": "2026-01-01T00:00:00Z",
+			"end_time": "2026-12-31T23:59:59Z"
+		}`)
+		req := httptest.NewRequest(http.MethodPost, "/voucher/seckill", bytes.NewBuffer(reqBody))
+		req.Header.Set("Content-Type", "application/json")
 
-		h.CreateSeckillVoucher(c)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
 		require.Equal(t, http.StatusOK, w.Code)
-
-		id := parseResponse[float64](t, w)
-		require.Equal(t, float64(200), id)
+		body := decodebody(t, w)
+		require.Equal(t, true, body["success"])
+		require.Equal(t, float64(20), body["data"].(float64))
 	})
 
-	t.Run("invalid json body", func(t *testing.T) {
-		h, _, _ := setupHandler(t)
-		c, w := setupGinContext(http.MethodPost, "/voucher/seckill", nil)
-		c.Request = httptest.NewRequest(http.MethodPost, "/voucher/seckill", strings.NewReader("{"))
-		c.Request.Header.Set("Content-Type", "application/json")
-
-		h.CreateSeckillVoucher(c)
-		require.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("service error", func(t *testing.T) {
-		h, repo, _ := setupHandler(t)
+	t.Run("create seckill voucher with invalid params", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
 		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
-			return fmt.Errorf("transaction failed")
+			t.Fatalf("service should not be called when binding fails")
+			return nil
 		}
 
-		now := time.Now()
-		c, w := setupGinContext(http.MethodPost, "/voucher/seckill", CreateVoucherReq{
-			ShopID:      1,
-			Title:       "秒杀券",
-			SubTitle:    "限时秒杀",
-			Rules:       "秒杀规则",
-			PayValue:    50,
-			ActualValue: 100,
-			Type:        1,
-			Stock:       10,
-			BeginTime:   now,
-			EndTime:     now.Add(1 * time.Hour),
-		})
+		reqBody := []byte(`{}`)
+		req := httptest.NewRequest(http.MethodPost, "/voucher/seckill", bytes.NewBuffer(reqBody))
+		req.Header.Set("Content-Type", "application/json")
 
-		h.CreateSeckillVoucher(c)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		body := decodebody(t, w)
+		require.Equal(t, false, body["success"])
+		require.Equal(t, float64(4001), body["code"].(float64))
+	})
+
+	t.Run("create seckill voucher with service error", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
+			return &errmsg.ErrInternalSec
+		}
+
+		reqBody := []byte(`{
+			"shop_id": 2,
+			"title": "Seckill Deal",
+			"sub_title": "Limited time",
+			"rules": "First come first serve",
+			"pay_value": 50,
+			"actual_value": 150,
+			"type": 1,
+			"stock": 10,
+			"begin_time": "2026-01-01T00:00:00Z",
+			"end_time": "2026-12-31T23:59:59Z"
+		}`)
+		req := httptest.NewRequest(http.MethodPost, "/voucher/seckill", bytes.NewBuffer(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
 		require.Equal(t, http.StatusInternalServerError, w.Code)
+		body := decodebody(t, w)
+		require.Equal(t, false, body["success"])
 	})
 }
 
-func TestHandler_GetVoucherByShopID(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		h, repo, _ := setupHandler(t)
-		now := time.Now()
-		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
-			return []Voucher{
-				{
-					ID:          1,
-					ShopID:      1,
-					Title:       "优惠券A",
-					SubTitle:    "副标题A",
-					Rules:       "规则A",
-					PayValue:    80,
-					ActualValue: 100,
-					Type:        0,
-					Status:      1,
-					Stock:       50,
-					BeginTime:   now,
-					EndTime:     now.Add(24 * time.Hour),
-				},
+// =============================================================================
+// GetVoucherByID
+// =============================================================================
+
+func TestHandler_GetVoucherByID(t *testing.T) {
+	t.Run("get voucher by ID successfully", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.getVoucherByIDFunc = func(ctx context.Context, id uint64) (*Voucher, error) {
+			require.Equal(t, uint64(100), id)
+			return &Voucher{
+				ID: 100, ShopID: 1, Title: "Test Voucher", SubTitle: "A test voucher",
+				Rules: "Rule 1", PayValue: 50, ActualValue: 100, Type: 0, Status: 1, Stock: 30,
+				BeginTime: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				EndTime:   time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC),
 			}, nil
 		}
 
-		c, w := setupGinContext(http.MethodGet, "/voucher/shop/1", nil)
-		c.Params = gin.Params{{Key: "shopid", Value: "1"}}
+		req := httptest.NewRequest(http.MethodGet, "/voucher/100", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
 
-		h.GetVoucherByShopID(c)
 		require.Equal(t, http.StatusOK, w.Code)
-
-		vouchers := parseResponse[[]VoucherResp](t, w)
-		require.Len(t, vouchers, 1)
-		require.Equal(t, "优惠券A", vouchers[0].Title)
+		body := decodebody(t, w)
+		require.Equal(t, true, body["success"])
+		data := body["data"].(map[string]any)
+		require.Equal(t, float64(100), data["id"])
+		require.Equal(t, "Test Voucher", data["title"])
 	})
 
-	t.Run("invalid shop id param", func(t *testing.T) {
-		h, _, _ := setupHandler(t)
-		c, w := setupGinContext(http.MethodGet, "/voucher/shop/abc", nil)
-		c.Params = gin.Params{{Key: "shopid", Value: "abc"}}
-
-		h.GetVoucherByShopID(c)
-		require.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("service error", func(t *testing.T) {
-		h, repo, _ := setupHandler(t)
-		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
-			return nil, fmt.Errorf("db connection lost")
+	t.Run("get voucher by non-numeric ID returns ErrInvalidParam", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.getVoucherByIDFunc = func(ctx context.Context, id uint64) (*Voucher, error) {
+			t.Fatalf("service should not be called when param is invalid")
+			return nil, nil
 		}
 
-		c, w := setupGinContext(http.MethodGet, "/voucher/shop/1", nil)
-		c.Params = gin.Params{{Key: "shopid", Value: "1"}}
+		req := httptest.NewRequest(http.MethodGet, "/voucher/abc", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
 
-		h.GetVoucherByShopID(c)
+		body := decodebody(t, w)
+		require.Equal(t, false, body["success"])
+		require.Equal(t, float64(4001), body["code"].(float64))
+	})
+
+	t.Run("get voucher by ID returns nil", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.getVoucherByIDFunc = func(ctx context.Context, id uint64) (*Voucher, error) {
+			return nil, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/voucher/999", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		body := decodebody(t, w)
+		require.Equal(t, true, body["success"])
+		require.Nil(t, body["data"])
+	})
+
+	t.Run("get voucher by ID with service error", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.getVoucherByIDFunc = func(ctx context.Context, id uint64) (*Voucher, error) {
+			return nil, &errmsg.ErrInternalSec
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/voucher/100", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
 		require.Equal(t, http.StatusInternalServerError, w.Code)
+		body := decodebody(t, w)
+		require.Equal(t, false, body["success"])
+	})
+}
+
+// =============================================================================
+// GetVoucherByShopID
+// =============================================================================
+
+func TestHandler_GetVoucherByShopID(t *testing.T) {
+	t.Run("get vouchers by shop ID successfully", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
+			require.Equal(t, uint64(1), shopID)
+			return []Voucher{
+				{ID: 1, ShopID: 1, Title: "Voucher 1", SubTitle: "S1", Rules: "R1", PayValue: 10, ActualValue: 20, Status: 1},
+				{ID: 2, ShopID: 1, Title: "Voucher 2", SubTitle: "S2", Rules: "R2", PayValue: 30, ActualValue: 50, Status: 1},
+			}, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/voucher/shop/1", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		body := decodebody(t, w)
+		require.Equal(t, true, body["success"])
+		data := body["data"].([]any)
+		require.Len(t, data, 2)
+	})
+
+	t.Run("get vouchers by non-numeric shop ID returns ErrInvalidParam", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
+			t.Fatalf("service should not be called when param is invalid")
+			return nil, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/voucher/shop/abc", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		body := decodebody(t, w)
+		require.Equal(t, false, body["success"])
+		require.Equal(t, float64(4001), body["code"].(float64))
+	})
+
+	t.Run("get vouchers by shop ID with empty result", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
+			return []Voucher{}, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/voucher/shop/999", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		body := decodebody(t, w)
+		require.Equal(t, true, body["success"])
+		data := body["data"].([]any)
+		require.Len(t, data, 0)
+	})
+
+	t.Run("get vouchers by shop ID with service error", func(t *testing.T) {
+		r, repo, _ := setUpVoucherHandler(t)
+		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
+			return nil, &errmsg.ErrInternalSec
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/voucher/shop/1", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusInternalServerError, w.Code)
+		body := decodebody(t, w)
+		require.Equal(t, false, body["success"])
 	})
 }

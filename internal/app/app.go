@@ -69,7 +69,7 @@ func (a *App) Start() error {
 
 	userRepo := user.NewRepository(a.db)
 	userSrv := user.NewService(userRepo, a.rdb)
-	userHandler := user.NewHandler(userSrv, *userInfoSrv)
+	userHandler := user.NewHandler(userSrv, userInfoSrv)
 
 	shopRepo := shop.NewRepository(a.db)
 	shopSrv := shop.NewService(shopRepo, a.rdb)

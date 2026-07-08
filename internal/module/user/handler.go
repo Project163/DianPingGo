@@ -16,17 +16,23 @@ type UserService interface {
 	Sign(ctx context.Context, userID uint64) error
 	SignCount(ctx context.Context, userID uint64) (int, error)
 	Login(ctx context.Context, req *LoginReq) (*LoginResp, error)
+	Logout(ctx context.Context, userId uint64, token string) error
 	CodeLogin(ctx context.Context, req *CodeLoginReq) (*LoginResp, error)
 	SendCode(ctx context.Context, req *SendCodeReq) (*SendCodeResp, error)
 	GetUserByID(ctx context.Context, userID uint64) (*UserDTO, error)
 }
 
-type Handler struct {
-	userSrv     UserService
-	userInfoSrv userinfo.Service
+type UserInfoService interface {
+	GetUserInfoByUserID(ctx context.Context, userID uint64) (*userinfo.UserInfoDTO, error)
+	CreateUserInfo(ctx context.Context, userInfoDTO *userinfo.UserInfoDTO) error
 }
 
-func NewHandler(userSrv UserService, userInfoSrv userinfo.Service) *Handler {
+type Handler struct {
+	userSrv     UserService
+	userInfoSrv UserInfoService
+}
+
+func NewHandler(userSrv UserService, userInfoSrv UserInfoService) *Handler {
 	return &Handler{
 		userSrv:     userSrv,
 		userInfoSrv: userInfoSrv,
@@ -65,6 +71,31 @@ func (h *Handler) CodeLogin(ctx *gin.Context) {
 	}
 
 	response.OK(ctx, resp)
+}
+
+// Logout 获取当前User token并登出
+func (h *Handler) Logout(ctx *gin.Context) {
+	userIdAny, exists := ctx.Get(middleware.CtxUserIDKey)
+	if !exists {
+		response.Fail(ctx, &errmsg.ErrUnauthorized)
+		return
+	}
+	userId, ok := userIdAny.(uint64)
+	if !ok {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, fmt.Errorf("invalid userID")))
+		return
+	}
+
+	token := ctx.GetHeader("Authorization")
+	if token == "" {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrUnauthorized, fmt.Errorf("missing token")))
+		return
+	}
+	if err := h.userSrv.Logout(ctx.Request.Context(), userId, token); err != nil {
+		response.Fail(ctx, err)
+		return
+	}
+	response.OK(ctx, nil)
 }
 
 // SendCode 发送验证码处理函数

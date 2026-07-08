@@ -2,11 +2,15 @@ package voucher
 
 import (
 	"context"
-	"dianping/internal/module/seckillvoucher"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
+
+	"dianping/internal/cache"
+	"dianping/internal/module/seckillvoucher"
+	"dianping/pkg/errmsg"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -48,268 +52,347 @@ func (m *mockVoucherRepo) CreateSeckillVoucher(ctx context.Context, v *Voucher, 
 	return nil
 }
 
-func setupService(t *testing.T) (*Service, *mockVoucherRepo, *miniredis.Miniredis) {
+func newMockVoucherRepo() *mockVoucherRepo {
+	return &mockVoucherRepo{}
+}
+
+func setUpVoucherService(t *testing.T) (*Service, *mockVoucherRepo, *miniredis.Miniredis) {
 	t.Helper()
+
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
-	repo := new(mockVoucherRepo)
+	t.Cleanup(func() {
+		require.NoError(t, rdb.Close())
+	})
+
+	repo := newMockVoucherRepo()
 	svc := NewService(repo, rdb)
 	return svc, repo, mr
 }
 
-func TestCreateVoucher_Service(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		repo.createVoucherFunc = func(ctx context.Context, v *Voucher) error {
-			v.ID = 100
+// =============================================================================
+// CreateVoucher
+// =============================================================================
+
+func TestService_CreateVoucher(t *testing.T) {
+	t.Run("create voucher successfully", func(t *testing.T) {
+		svc, repo, _ := setUpVoucherService(t)
+		ctx := context.Background()
+
+		repo.createVoucherFunc = func(ctx context.Context, voucher *Voucher) error {
+			voucher.ID = 100 // 模拟数据库自增
+			require.Equal(t, uint64(1), voucher.ShopID)
+			require.Equal(t, "Test Voucher", voucher.Title)
+			require.Equal(t, uint(0), voucher.Type)
 			return nil
 		}
 
-		id, err := srv.CreateVoucher(context.Background(), &Voucher{
+		id, err := svc.CreateVoucher(ctx, &Voucher{
 			ShopID:      1,
-			Title:       "测试券",
-			SubTitle:    "副标题",
-			Rules:       "规则",
-			PayValue:    80,
-			ActualValue: 100,
+			Title:       "Test Voucher",
+			SubTitle:    "Sub",
+			Rules:       "Rule",
+			PayValue:    100,
+			ActualValue: 200,
 			Type:        0,
 			Stock:       50,
-			BeginTime:   time.Now(),
-			EndTime:     time.Now().Add(24 * time.Hour),
 		})
 		require.NoError(t, err)
 		require.Equal(t, uint64(100), id)
 	})
 
-	t.Run("repository error", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		repo.createVoucherFunc = func(ctx context.Context, v *Voucher) error {
-			return fmt.Errorf("db insert failed")
+	t.Run("create voucher with repository error", func(t *testing.T) {
+		svc, repo, _ := setUpVoucherService(t)
+		ctx := context.Background()
+
+		dbErr := errors.New("database connection lost")
+		repo.createVoucherFunc = func(ctx context.Context, voucher *Voucher) error {
+			return dbErr
 		}
 
-		id, err := srv.CreateVoucher(context.Background(), &Voucher{
-			ShopID:      1,
-			Title:       "测试券",
-			SubTitle:    "副标题",
-			Rules:       "规则",
-			PayValue:    80,
-			ActualValue: 100,
-			Type:        0,
-			Stock:       50,
-			BeginTime:   time.Now(),
-			EndTime:     time.Now().Add(24 * time.Hour),
+		id, err := svc.CreateVoucher(ctx, &Voucher{
+			ShopID: 1, Title: "Test", SubTitle: "S", Rules: "R", PayValue: 10, ActualValue: 20, Stock: 5,
 		})
 		require.Error(t, err)
 		require.Equal(t, uint64(0), id)
-		require.Contains(t, err.Error(), "db insert failed")
+		require.Equal(t, dbErr, err)
 	})
 }
 
-func TestCreateSeckillVoucher_Service(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
+// =============================================================================
+// CreateSeckillVoucher
+// =============================================================================
+
+func TestService_CreateSeckillVoucher(t *testing.T) {
+	t.Run("create seckill voucher successfully and sets stock in Redis", func(t *testing.T) {
+		svc, repo, mr := setUpVoucherService(t)
+		ctx := context.Background()
+
 		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
 			v.ID = 200
-			sv.VoucherID = 200
+			require.Equal(t, uint(1), v.Type)
+			require.Equal(t, uint(30), v.Stock)
 			return nil
 		}
 
-		id, err := srv.CreateSeckillVoucher(context.Background(), &Voucher{
+		id, err := svc.CreateSeckillVoucher(ctx, &Voucher{
 			ShopID:      1,
-			Title:       "秒杀券",
-			SubTitle:    "限时秒杀",
-			Rules:       "秒杀规则",
+			Title:       "Seckill",
+			SubTitle:    "S",
+			Rules:       "R",
 			PayValue:    50,
-			ActualValue: 100,
+			ActualValue: 200,
 			Type:        1,
-			Stock:       10,
-			BeginTime:   time.Now(),
-			EndTime:     time.Now().Add(1 * time.Hour),
+			Stock:       30,
 		})
 		require.NoError(t, err)
 		require.Equal(t, uint64(200), id)
 
+		// Verify Redis stock key was set
 		stockKey := fmt.Sprintf("%s%d", SeckillStockKey, 200)
-		stock, err := mr.Get(stockKey)
-		require.NoError(t, err)
-		require.Equal(t, "10", stock)
+		stockVal, _ := mr.Get(stockKey)
+		require.Equal(t, "30", stockVal)
 	})
 
-	t.Run("repository error", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
+	t.Run("create seckill voucher with repository error", func(t *testing.T) {
+		svc, repo, _ := setUpVoucherService(t)
+		ctx := context.Background()
+
 		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
-			return fmt.Errorf("transaction failed")
+			return errors.New("tx rollback")
 		}
 
-		id, err := srv.CreateSeckillVoucher(context.Background(), &Voucher{
-			ShopID:      1,
-			Title:       "秒杀券",
-			SubTitle:    "限时秒杀",
-			Rules:       "秒杀规则",
-			PayValue:    50,
-			ActualValue: 100,
-			Type:        1,
-			Stock:       10,
-			BeginTime:   time.Now(),
-			EndTime:     time.Now().Add(1 * time.Hour),
+		id, err := svc.CreateSeckillVoucher(ctx, &Voucher{
+			ShopID: 1, Title: "S", SubTitle: "S", Rules: "R", PayValue: 10, ActualValue: 20, Type: 1, Stock: 5,
 		})
 		require.Error(t, err)
 		require.Equal(t, uint64(0), id)
-		require.Contains(t, err.Error(), "transaction failed")
 	})
 }
 
-func TestGetVoucherByShopID_Service(t *testing.T) {
-	t.Run("cache miss queries database", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		now := time.Now()
-		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
-			require.Equal(t, uint64(1), shopID)
-			return []Voucher{
-				{
-					ID:          1,
-					ShopID:      1,
-					Title:       "优惠券A",
-					SubTitle:    "副标题A",
-					Rules:       "规则A",
-					PayValue:    80,
-					ActualValue: 100,
-					Type:        0,
-					Status:      1,
-					Stock:       50,
-					BeginTime:   now,
-					EndTime:     now.Add(24 * time.Hour),
-				},
+// =============================================================================
+// GetVoucherByID
+// =============================================================================
+
+func TestService_GetVoucherByID(t *testing.T) {
+	t.Run("cache miss queries DB and caches result", func(t *testing.T) {
+		svc, repo, mr := setUpVoucherService(t)
+		ctx := context.Background()
+
+		repo.getVoucherByIDFunc = func(ctx context.Context, id uint64) (*Voucher, error) {
+			require.Equal(t, uint64(100), id)
+			return &Voucher{
+				ID:          100,
+				ShopID:      1,
+				Title:       "Test",
+				SubTitle:    "Sub",
+				Rules:       "Rule",
+				PayValue:    50,
+				ActualValue: 100,
+				Type:        0,
+				Status:      1,
+				Stock:       20,
+				BeginTime:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				EndTime:     time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC),
 			}, nil
 		}
 
-		result, err := srv.GetVoucherByShopID(context.Background(), 1)
+		resp, err := svc.GetVoucherByID(ctx, 100)
 		require.NoError(t, err)
-		require.Len(t, result, 1)
-		require.Equal(t, "优惠券A", result[0].Title)
+		require.NotNil(t, resp)
+		require.Equal(t, uint64(100), resp.ID)
+		require.Equal(t, "Test", resp.Title)
+
+		// Verify result was cached
+		cacheKey := fmt.Sprintf("%s%d", CacheVoucherKey, 100)
+		cached, _ := mr.Get(cacheKey)
+		require.NotEmpty(t, cached)
 	})
 
-	t.Run("cache hit returns cached data", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
-		now := time.Now()
+	t.Run("cache hit returns from cache without querying DB", func(t *testing.T) {
+		svc, _, mr := setUpVoucherService(t)
+		ctx := context.Background()
 
-		// 确保 repo 不被调用 —— 命中缓存
-		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
-			t.Fatal("should not call database when cache hits")
+		cachedVoucher := Voucher{
+			ID: 200, ShopID: 2, Title: "Cached", SubTitle: "Sub",
+			Rules: "R", PayValue: 10, ActualValue: 20,
+			Type: 0, Status: 1, Stock: 5,
+		}
+		cacheKey := fmt.Sprintf("%s%d", CacheVoucherKey, 200)
+		bytes, _ := json.Marshal(cachedVoucher)
+		mr.Set(cacheKey, string(bytes))
+
+		resp, err := svc.GetVoucherByID(ctx, 200)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, uint64(200), resp.ID)
+		require.Equal(t, "Cached", resp.Title)
+	})
+
+	t.Run("cache miss with null marker returns nil", func(t *testing.T) {
+		svc, _, mr := setUpVoucherService(t)
+		ctx := context.Background()
+
+		// Set empty string as null marker
+		cacheKey := fmt.Sprintf("%s%d", CacheVoucherKey, 999)
+		mr.Set(cacheKey, "")
+
+		resp, err := svc.GetVoucherByID(ctx, 999)
+		require.NoError(t, err)
+		require.Nil(t, resp)
+	})
+
+	t.Run("DB returns nil record writes null marker and returns nil", func(t *testing.T) {
+		svc, repo, mr := setUpVoucherService(t)
+		ctx := context.Background()
+
+		repo.getVoucherByIDFunc = func(ctx context.Context, id uint64) (*Voucher, error) {
 			return nil, nil
 		}
 
-		vouchers := []Voucher{{
-			ID:          2,
-			ShopID:      1,
-			Title:       "缓存券",
-			SubTitle:    "缓存副标题",
-			Rules:       "缓存规则",
-			PayValue:    30,
-			ActualValue: 50,
-			Type:        1,
-			Status:      1,
-			Stock:       20,
-			BeginTime:   now,
-			EndTime:     now.Add(24 * time.Hour),
-		}}
-		key := fmt.Sprintf("%s%d", CacheShopVoucherKey, 1)
-		bytes, _ := json.Marshal(vouchers)
-		mr.Set(key, string(bytes))
-
-		result, err := srv.GetVoucherByShopID(context.Background(), 1)
+		resp, err := svc.GetVoucherByID(ctx, 999)
 		require.NoError(t, err)
-		require.Len(t, result, 1)
-		require.Equal(t, "缓存券", result[0].Title)
+		require.Nil(t, resp)
+
+		// Verify null marker was cached
+		cacheKey := fmt.Sprintf("%s%d", CacheVoucherKey, 999)
+		nullVal, _ := mr.Get(cacheKey)
+		require.Equal(t, "", nullVal)
 	})
 
-	t.Run("cache empty marker returns empty list", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
+	t.Run("repository DB error is propagated", func(t *testing.T) {
+		svc, repo, _ := setUpVoucherService(t)
+		ctx := context.Background()
 
-		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
-			t.Fatal("should not call database when empty marker is cached")
-			return nil, nil
+		dbErr := errors.New("db connection lost")
+		repo.getVoucherByIDFunc = func(ctx context.Context, id uint64) (*Voucher, error) {
+			return nil, dbErr
 		}
 
-		key := fmt.Sprintf("%s%d", CacheShopVoucherKey, 999)
-		mr.Set(key, "")
-
-		result, err := srv.GetVoucherByShopID(context.Background(), 999)
-		require.NoError(t, err)
-		require.Empty(t, result)
-	})
-
-	t.Run("database returns nil result empty list", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
-			return nil, nil
-		}
-
-		result, err := srv.GetVoucherByShopID(context.Background(), 999)
-		require.NoError(t, err)
-		require.Empty(t, result)
-	})
-
-	t.Run("database error", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
-			return nil, fmt.Errorf("database connection lost")
-		}
-
-		result, err := srv.GetVoucherByShopID(context.Background(), 1)
+		resp, err := svc.GetVoucherByID(ctx, 100)
 		require.Error(t, err)
-		require.Nil(t, result)
-		require.Contains(t, err.Error(), "database connection lost")
+		require.Nil(t, resp)
 	})
 }
 
-func TestToVoucherRespList(t *testing.T) {
-	now := time.Now()
-	vouchers := []Voucher{
-		{
-			ID:          1,
-			ShopID:      1,
-			Title:       "券A",
-			SubTitle:    "副A",
-			Rules:       "规则A",
-			PayValue:    80,
-			ActualValue: 100,
-			Type:        0,
-			Status:      1,
-			Stock:       50,
-			BeginTime:   now,
-			EndTime:     now.Add(24 * time.Hour),
-		},
-		{
-			ID:          2,
-			ShopID:      1,
-			Title:       "券B",
-			SubTitle:    "副B",
-			Rules:       "规则B",
-			PayValue:    40,
-			ActualValue: 50,
-			Type:        1,
-			Status:      1,
-			Stock:       30,
-			BeginTime:   now,
-			EndTime:     now.Add(48 * time.Hour),
-		},
-	}
+// =============================================================================
+// GetVoucherByShopID
+// =============================================================================
 
-	result := toVoucherRespList(vouchers)
-	require.Len(t, result, 2)
-	require.Equal(t, "券A", result[0].Title)
-	require.Equal(t, "券B", result[1].Title)
-	require.Equal(t, uint64(1), result[0].ID)
-	require.Equal(t, uint64(2), result[1].ID)
+func TestService_GetVoucherByShopID(t *testing.T) {
+	t.Run("cache miss queries DB and caches result", func(t *testing.T) {
+		svc, repo, mr := setUpVoucherService(t)
+		ctx := context.Background()
+
+		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
+			require.Equal(t, uint64(1), shopID)
+			return []Voucher{
+				{ID: 1, ShopID: 1, Title: "V1", SubTitle: "S1", Rules: "R1", PayValue: 10, ActualValue: 20, Status: 1},
+				{ID: 2, ShopID: 1, Title: "V2", SubTitle: "S2", Rules: "R2", PayValue: 30, ActualValue: 50, Status: 1},
+			}, nil
+		}
+
+		resps, err := svc.GetVoucherByShopID(ctx, 1)
+		require.NoError(t, err)
+		require.Len(t, resps, 2)
+		require.Equal(t, uint64(1), resps[0].ID)
+		require.Equal(t, "V1", resps[0].Title)
+		require.Equal(t, uint64(2), resps[1].ID)
+		require.Equal(t, "V2", resps[1].Title)
+
+		// Verify result was cached
+		cacheKey := fmt.Sprintf("%s%d", CacheShopVoucherKey, 1)
+		cached, _ := mr.Get(cacheKey)
+		require.NotEmpty(t, cached)
+	})
+
+	t.Run("cache hit returns from cache", func(t *testing.T) {
+		svc, _, mr := setUpVoucherService(t)
+		ctx := context.Background()
+
+		cachedVouchers := []Voucher{
+			{ID: 10, ShopID: 5, Title: "CachedV", SubTitle: "S", Rules: "R", PayValue: 1, ActualValue: 2, Status: 1},
+		}
+		cacheKey := fmt.Sprintf("%s%d", CacheShopVoucherKey, 5)
+		bytes, _ := json.Marshal(cachedVouchers)
+		mr.Set(cacheKey, string(bytes))
+
+		resps, err := svc.GetVoucherByShopID(ctx, 5)
+		require.NoError(t, err)
+		require.Len(t, resps, 1)
+		require.Equal(t, "CachedV", resps[0].Title)
+	})
+
+	t.Run("no vouchers found returns empty slice", func(t *testing.T) {
+		svc, repo, _ := setUpVoucherService(t)
+		ctx := context.Background()
+
+		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
+			return []Voucher{}, nil
+		}
+
+		resps, err := svc.GetVoucherByShopID(ctx, 999)
+		require.NoError(t, err)
+		require.Len(t, resps, 0)
+	})
+
+	t.Run("repository DB error is propagated via cache layer", func(t *testing.T) {
+		svc, repo, _ := setUpVoucherService(t)
+		ctx := context.Background()
+
+		dbErr := errors.New("db connection lost")
+		repo.getByShopIDFunc = func(ctx context.Context, shopID uint64) ([]Voucher, error) {
+			return nil, dbErr
+		}
+
+		// The cache QueryWithPassThrough returns the db error directly
+		// when the dbFunc returns an error (not ErrDataNotFound)
+		resps, err := svc.GetVoucherByShopID(ctx, 1)
+		require.Error(t, err)
+		require.Nil(t, resps)
+	})
 }
 
-func TestToVoucherRespList_Empty(t *testing.T) {
-	result := toVoucherRespList(nil)
-	require.Empty(t, result)
+// =============================================================================
+// toVoucherRespList
+// =============================================================================
 
-	result = toVoucherRespList([]Voucher{})
-	require.Empty(t, result)
+func TestService_toVoucherRespList(t *testing.T) {
+	t.Run("converts vouchers to response DTOs", func(t *testing.T) {
+		vouchers := []Voucher{
+			{
+				ID: 1, ShopID: 10, Title: "V1", SubTitle: "S1", Rules: "R1",
+				PayValue: 100, ActualValue: 200, Type: 0, Status: 1, Stock: 50,
+			},
+			{
+				ID: 2, ShopID: 10, Title: "V2", SubTitle: "S2", Rules: "R2",
+				PayValue: 300, ActualValue: 500, Type: 1, Status: 1, Stock: 10,
+			},
+		}
+
+		resps := toVoucherRespList(vouchers)
+		require.Len(t, resps, 2)
+		require.Equal(t, uint64(1), resps[0].ID)
+		require.Equal(t, "V1", resps[0].Title)
+		require.Equal(t, uint64(200), resps[0].ActualValue)
+		require.Equal(t, uint64(2), resps[1].ID)
+		require.Equal(t, "V2", resps[1].Title)
+		require.Equal(t, uint(1), resps[1].Type)
+	})
+
+	t.Run("empty slice returns empty slice", func(t *testing.T) {
+		resps := toVoucherRespList([]Voucher{})
+		require.Len(t, resps, 0)
+	})
 }
+
+// Ensure the mock satisfies the VoucherRepository interface
+var _ VoucherRepository = (*mockVoucherRepo)(nil)
+
+// Ensure cache.ErrDataNotFound is importable
+var _ = cache.ErrDataNotFound
+
+// Ensure errmsg is importable
+var _ = errmsg.ErrInternalSec

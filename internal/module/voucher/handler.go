@@ -1,6 +1,7 @@
 package voucher
 
 import (
+	"context"
 	"dianping/pkg/errmsg"
 	"dianping/pkg/response"
 	"strconv"
@@ -8,11 +9,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct {
-	srv *Service
+// VoucherHandlerService defines the interface that the Handler depends on.
+type VoucherHandlerService interface {
+	CreateVoucher(ctx context.Context, voucher *Voucher) (uint64, error)
+	CreateSeckillVoucher(ctx context.Context, svoucher *Voucher) (uint64, error)
+	GetVoucherByID(ctx context.Context, id uint64) (*VoucherResp, error)
+	GetVoucherByShopID(ctx context.Context, shopID uint64) ([]VoucherResp, error)
 }
 
-func NewHandler(srv *Service) *Handler {
+type Handler struct {
+	srv VoucherHandlerService
+}
+
+func NewHandler(srv VoucherHandlerService) *Handler {
 	return &Handler{srv: srv}
 }
 
@@ -70,6 +79,25 @@ func (h *Handler) CreateSeckillVoucher(ctx *gin.Context) {
 		return
 	}
 	response.OK(ctx, id)
+}
+
+func (h *Handler) GetVoucherByID(ctx *gin.Context) {
+	voucherIDStr := ctx.Param("id")
+	voucherID, err := strconv.ParseUint(voucherIDStr, 10, 64)
+	if err != nil {
+		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))
+		return
+	}
+	voucherResp, err := h.srv.GetVoucherByID(ctx.Request.Context(), voucherID)
+	if err != nil {
+		response.Fail(ctx, err)
+		return
+	}
+	if voucherResp == nil {
+		response.OK(ctx, nil)
+		return
+	}
+	response.OK(ctx, voucherResp)
 }
 
 // GetVoucherByShopID 根据商户ID查询优惠券列表

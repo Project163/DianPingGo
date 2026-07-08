@@ -1,18 +1,26 @@
 package voucherorder
 
 import (
+	"context"
 	"dianping/internal/middleware"
 	"dianping/pkg/errmsg"
 	"dianping/pkg/response"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct {
-	srv *Service
+// VoucherOrderHandlerService defines the interface that the Handler depends on.
+type VoucherOrderHandlerService interface {
+	SeckillVoucher(ctx context.Context, voucherID uint64, userID uint64) (int64, error)
+	GetVoucherOrderByID(ctx context.Context, orderID uint64) (*VoucherOrder, error)
 }
 
-func NewHandler(srv *Service) *Handler {
+type Handler struct {
+	srv VoucherOrderHandlerService
+}
+
+func NewHandler(srv VoucherOrderHandlerService) *Handler {
 	return &Handler{srv: srv}
 }
 
@@ -36,4 +44,23 @@ func (h *Handler) SeckillVoucher(ctx *gin.Context) {
 		return
 	}
 	response.OK(ctx, orderID)
+}
+
+func (h *Handler) GetVoucherOrderByID(ctx *gin.Context) {
+	orderIdStr := ctx.Param("id")
+	if orderIdStr == "" {
+		response.Fail(ctx, &errmsg.ErrInvalidParam)
+		return
+	}
+	orderId, err := strconv.ParseUint(orderIdStr, 10, 64)
+	if err != nil {
+		response.Fail(ctx, &errmsg.ErrInvalidParam)
+		return
+	}
+	orderResp, err := h.srv.GetVoucherOrderByID(ctx.Request.Context(), orderId)
+	if err != nil {
+		response.Fail(ctx, err)
+		return
+	}
+	response.OK(ctx, orderResp)
 }

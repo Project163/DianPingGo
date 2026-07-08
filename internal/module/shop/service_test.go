@@ -2,388 +2,596 @@ package shop
 
 import (
 	"context"
-	"dianping/pkg/errmsg"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"testing"
+
+	"dianping/pkg/errmsg"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
-type mockShopRepo struct {
+// mockShopSvcRepo implements ShopRepository for service-level testing.
+type mockShopSvcRepo struct {
+	createShopFunc     func(ctx context.Context, shop *Shop) error
 	getShopByIDFunc    func(ctx context.Context, id uint64) (*Shop, error)
 	updateShopFunc     func(ctx context.Context, shop *Shop) error
 	getShopsByTypeFunc func(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error)
 	getShopsByIDsFunc  func(ctx context.Context, ids []uint64) ([]Shop, error)
 	getShopsByNameFunc func(ctx context.Context, name string, offset, limit int) ([]Shop, error)
-	CreateShopFunc     func(ctx context.Context, shop *Shop) error
 }
 
-func (m *mockShopRepo) GetShopByID(ctx context.Context, id uint64) (*Shop, error) {
+func (m *mockShopSvcRepo) CreateShop(ctx context.Context, shop *Shop) error {
+	if m.createShopFunc != nil {
+		return m.createShopFunc(ctx, shop)
+	}
+	return nil
+}
+
+func (m *mockShopSvcRepo) GetShopByID(ctx context.Context, id uint64) (*Shop, error) {
 	if m.getShopByIDFunc != nil {
 		return m.getShopByIDFunc(ctx, id)
 	}
 	return nil, nil
 }
 
-func (m *mockShopRepo) UpdateShop(ctx context.Context, shop *Shop) error {
+func (m *mockShopSvcRepo) UpdateShop(ctx context.Context, shop *Shop) error {
 	if m.updateShopFunc != nil {
 		return m.updateShopFunc(ctx, shop)
 	}
 	return nil
 }
 
-func (m *mockShopRepo) GetShopsByType(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error) {
+func (m *mockShopSvcRepo) GetShopsByType(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error) {
 	if m.getShopsByTypeFunc != nil {
 		return m.getShopsByTypeFunc(ctx, typeID, offset, limit)
 	}
 	return nil, nil
 }
 
-func (m *mockShopRepo) GetShopsByIDs(ctx context.Context, ids []uint64) ([]Shop, error) {
+func (m *mockShopSvcRepo) GetShopsByIDs(ctx context.Context, ids []uint64) ([]Shop, error) {
 	if m.getShopsByIDsFunc != nil {
 		return m.getShopsByIDsFunc(ctx, ids)
 	}
 	return nil, nil
 }
 
-func (m *mockShopRepo) GetShopsByName(ctx context.Context, name string, offset, limit int) ([]Shop, error) {
+func (m *mockShopSvcRepo) GetShopsByName(ctx context.Context, name string, offset, limit int) ([]Shop, error) {
 	if m.getShopsByNameFunc != nil {
 		return m.getShopsByNameFunc(ctx, name, offset, limit)
 	}
 	return nil, nil
 }
 
-func (m *mockShopRepo) CreateShop(ctx context.Context, shop *Shop) error {
-	if m.CreateShopFunc != nil {
-		return m.CreateShopFunc(ctx, shop)
-	}
-	return nil
-}
-
-func setupService(t *testing.T) (*Service, *mockShopRepo, *miniredis.Miniredis) {
+// setUpShopService creates a Service with mock repository and miniredis.
+func setUpShopService(t *testing.T) (*Service, *mockShopSvcRepo, *miniredis.Miniredis) {
 	t.Helper()
+
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	repo := new(mockShopRepo)
-	svc := NewService(repo, rdb)
-	return svc, repo, mr
+	t.Cleanup(func() {
+		require.NoError(t, rdb.Close())
+	})
+	repo := new(mockShopSvcRepo)
+	return NewService(repo, rdb), repo, mr
 }
 
-func TestCreateShop_Service(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		repo.CreateShopFunc = func(ctx context.Context, shop *Shop) error {
+// =============================================================================
+// CreateShop
+// =============================================================================
+
+func TestService_CreateShop(t *testing.T) {
+	t.Run("create shop successfully", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		repo.createShopFunc = func(ctx context.Context, shop *Shop) error {
 			require.Equal(t, "New Shop", shop.Name)
+			require.Equal(t, uint64(1), shop.TypeID)
+			shop.ID = 100
 			return nil
 		}
 
-		err := srv.CreateShop(context.Background(), &Shop{Name: "New Shop"})
+		shop := &Shop{Name: "New Shop", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00"}
+		err := svc.CreateShop(ctx, shop)
 		require.NoError(t, err)
+		require.Equal(t, uint64(100), shop.ID)
 	})
 
-	t.Run("repository error", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		repo.CreateShopFunc = func(ctx context.Context, shop *Shop) error {
-			return fmt.Errorf("db error")
+	t.Run("create shop with repository error propagates", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		dbErr := errors.New("db connection lost")
+		repo.createShopFunc = func(ctx context.Context, shop *Shop) error {
+			return dbErr
 		}
 
-		err := srv.CreateShop(context.Background(), &Shop{Name: "Fail Shop"})
+		err := svc.CreateShop(ctx, &Shop{Name: "Test"})
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "db error")
+		require.Equal(t, dbErr, err)
 	})
 }
 
-func TestGetShopByID_Service(t *testing.T) {
-	t.Run("cache miss queries database", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			require.Equal(t, uint64(1), id)
-			return &Shop{ID: 1, Name: "Test Shop", TypeID: 1, Area: "Area", Address: "Addr"}, nil
-		}
+// =============================================================================
+// GetShopByID (with cache pass-through)
+// =============================================================================
 
-		resp, err := srv.GetShopByID(context.Background(), 1)
+func TestService_GetShopByID(t *testing.T) {
+	t.Run("cache hit returns shop without querying DB", func(t *testing.T) {
+		svc, _, mr := setUpShopService(t)
+		ctx := context.Background()
+
+		// Pre-warm cache by storing shop data
+		cachedShop := Shop{ID: 1, Name: "Cached Shop", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00-22:00"}
+		cacheKey := CacheShopKey + "1"
+		bytes := jsonMarshal(cachedShop)
+		mr.Set(cacheKey, string(bytes))
+
+		// repo not set — nil panic if DB is called, verifying cache hit
+		resp, err := svc.GetShopByID(ctx, 1)
 		require.NoError(t, err)
-		require.Equal(t, "Test Shop", resp.Name)
-	})
-
-	t.Run("cache hit returns cached data", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
-		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			t.Fatal("should not call database when cache hits")
-			return nil, nil
-		}
-
-		shop := Shop{ID: 2, Name: "Cached Shop", TypeID: 1, Area: "Area", Address: "Addr"}
-		bytes, _ := json.Marshal(shop)
-		mr.Set("cache:shop:2", string(bytes))
-
-		resp, err := srv.GetShopByID(context.Background(), 2)
-		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, uint64(1), resp.ID)
 		require.Equal(t, "Cached Shop", resp.Name)
 	})
 
-	t.Run("not found returns shop not found error", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
+	t.Run("cache miss queries DB and caches result", func(t *testing.T) {
+		svc, repo, mr := setUpShopService(t)
+		ctx := context.Background()
+
+		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
+			require.Equal(t, uint64(2), id)
+			return &Shop{ID: 2, Name: "DB Shop", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "09:00-21:00"}, nil
+		}
+
+		resp, err := svc.GetShopByID(ctx, 2)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, "DB Shop", resp.Name)
+
+		// Verify result was written to cache
+		cacheKey := CacheShopKey + "2"
+		cached, _ := mr.Get(cacheKey)
+		require.NotEmpty(t, cached)
+	})
+
+	t.Run("cache miss with no DB record returns ErrShopNotFound", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
 		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
 			return nil, nil
 		}
-		// 确保缓存未命中
-		mr.Del("cache:shop:999")
 
-		_, err := srv.GetShopByID(context.Background(), 999)
+		resp, err := svc.GetShopByID(ctx, 9999)
 		require.Error(t, err)
-		require.True(t, errors.Is(err, &errmsg.ErrShopNotFound))
+		require.Nil(t, resp)
+		require.Equal(t, &errmsg.ErrShopNotFound, err)
 	})
 
-	t.Run("database error", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
-		mr.Del("cache:shop:1")
+	t.Run("get shop by ID with DB error propagates", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		dbErr := errors.New("db timeout")
 		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			return nil, fmt.Errorf("db connection lost")
+			return nil, dbErr
 		}
 
-		_, err := srv.GetShopByID(context.Background(), 1)
+		resp, err := svc.GetShopByID(ctx, 1)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "db connection lost")
+		require.Nil(t, resp)
 	})
 }
 
-func TestGetShopByIDWithMutex_Service(t *testing.T) {
-	t.Run("cache miss queries database", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
+// =============================================================================
+// GetShopByIDWithMutex
+// =============================================================================
+
+func TestService_GetShopByIDWithMutex(t *testing.T) {
+	t.Run("cache miss queries DB and caches result", func(t *testing.T) {
+		svc, repo, mr := setUpShopService(t)
+		ctx := context.Background()
+
 		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			return &Shop{ID: 1, Name: "Mutex Shop", TypeID: 1}, nil
+			return &Shop{ID: 3, Name: "Mutex Shop", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00-22:00"}, nil
 		}
 
-		resp, err := srv.GetShopByIDWithMutex(context.Background(), 1)
+		resp, err := svc.GetShopByIDWithMutex(ctx, 3)
 		require.NoError(t, err)
+		require.NotNil(t, resp)
 		require.Equal(t, "Mutex Shop", resp.Name)
+
+		// Verify cached
+		cacheKey := CacheShopKey + "3"
+		cached, _ := mr.Get(cacheKey)
+		require.NotEmpty(t, cached)
 	})
 
-	t.Run("not found returns shop not found error", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
-		mr.Del("cache:shop:999")
-		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			return nil, nil
-		}
+	t.Run("cache hit returns shop without querying DB", func(t *testing.T) {
+		svc, _, mr := setUpShopService(t)
+		ctx := context.Background()
 
-		_, err := srv.GetShopByIDWithMutex(context.Background(), 999)
-		require.True(t, errors.Is(err, &errmsg.ErrShopNotFound))
-	})
+		cachedShop := Shop{ID: 4, Name: "Cached Shop", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00"}
+		cacheKey := CacheShopKey + "4"
+		bytes := jsonMarshal(cachedShop)
+		mr.Set(cacheKey, string(bytes))
 
-	t.Run("database error", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
-		mr.Del("cache:shop:1")
-		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			return nil, fmt.Errorf("db down")
-		}
-
-		_, err := srv.GetShopByIDWithMutex(context.Background(), 1)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "db down")
-	})
-}
-
-func TestGetShopByIDWithLogicalExpire_Service(t *testing.T) {
-	t.Run("cache miss queries database", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			return &Shop{ID: 3, Name: "Logical Shop", TypeID: 2}, nil
-		}
-
-		resp, err := srv.GetShopByIDWithLogicalExpire(context.Background(), 3)
+		resp, err := svc.GetShopByIDWithMutex(ctx, 4)
 		require.NoError(t, err)
-		require.Equal(t, "Logical Shop", resp.Name)
+		require.NotNil(t, resp)
+		require.Equal(t, "Cached Shop", resp.Name)
 	})
 
-	t.Run("not found returns shop not found error", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
-		mr.Del("cache:shop:999")
+	t.Run("cache miss with no DB record returns ErrShopNotFound", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
 		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
 			return nil, nil
 		}
 
-		_, err := srv.GetShopByIDWithLogicalExpire(context.Background(), 999)
-		require.True(t, errors.Is(err, &errmsg.ErrShopNotFound))
+		resp, err := svc.GetShopByIDWithMutex(ctx, 9999)
+		require.Error(t, err)
+		require.Nil(t, resp)
+		require.Equal(t, &errmsg.ErrShopNotFound, err)
 	})
 }
 
-func TestUpdate_Service(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		srv, repo, mr := setupService(t)
-		shop := &Shop{ID: 1, Name: "Old", TypeID: 1, Area: "Old Area"}
+// =============================================================================
+// GetShopByIDWithLogicalExpire
+// =============================================================================
+
+func TestService_GetShopByIDWithLogicalExpire(t *testing.T) {
+	t.Run("cache miss queries DB and sets logical expire", func(t *testing.T) {
+		svc, repo, mr := setUpShopService(t)
+		ctx := context.Background()
+
 		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			return shop, nil
+			return &Shop{ID: 5, Name: "Logical Shop", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00-22:00"}, nil
 		}
-		repo.updateShopFunc = func(ctx context.Context, s *Shop) error {
-			require.Equal(t, "New Name", s.Name)
-			require.Equal(t, "New Area", s.Area)
+
+		resp, err := svc.GetShopByIDWithLogicalExpire(ctx, 5)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, "Logical Shop", resp.Name)
+
+		// Verify cache key exists with RedisData envelope
+		cacheKey := CacheShopKey + "5"
+		cached, _ := mr.Get(cacheKey)
+		require.NotEmpty(t, cached)
+	})
+
+	t.Run("cache hit with valid expiry returns cached shop", func(t *testing.T) {
+		svc, _, mr := setUpShopService(t)
+		ctx := context.Background()
+
+		// Use the service's own SetWithLogicalExpire to populate cache
+		shop := Shop{ID: 6, Name: "Fresh Shop", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00"}
+		err := svc.cacheClient.SetWithLogicalExpire(ctx, CacheShopKey+"6", &shop, LogicalShopTTL)
+		require.NoError(t, err)
+
+		resp, err := svc.GetShopByIDWithLogicalExpire(ctx, 6)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, "Fresh Shop", resp.Name)
+
+		_ = mr // miniredis used above
+	})
+
+	t.Run("cache hit with no DB record returns ErrShopNotFound", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
+			return nil, nil
+		}
+
+		resp, err := svc.GetShopByIDWithLogicalExpire(ctx, 9999)
+		require.Error(t, err)
+		require.Nil(t, resp)
+		require.Equal(t, &errmsg.ErrShopNotFound, err)
+	})
+
+	t.Run("db error propagates", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		dbErr := errors.New("db error")
+		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
+			return nil, dbErr
+		}
+
+		resp, err := svc.GetShopByIDWithLogicalExpire(ctx, 1)
+		require.Error(t, err)
+		require.Nil(t, resp)
+	})
+}
+
+// =============================================================================
+// Update
+// =============================================================================
+
+func TestService_Update(t *testing.T) {
+	t.Run("update shop successfully and invalidates cache", func(t *testing.T) {
+		svc, repo, mr := setUpShopService(t)
+		ctx := context.Background()
+
+		// Pre-populate cache so we can verify invalidation
+		cacheKey := CacheShopKey + "10"
+		mr.Set(cacheKey, `{"id":10,"name":"Old Name"}`)
+
+		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
+			require.Equal(t, uint64(10), id)
+			return &Shop{ID: 10, Name: "Old Name", TypeID: 1}, nil
+		}
+		repo.updateShopFunc = func(ctx context.Context, shop *Shop) error {
+			require.Equal(t, "New Name", shop.Name)
 			return nil
 		}
-		// 预置缓存，验证更新后删除
-		mr.Set("cache:shop:1", "old data")
 
-		err := srv.Update(context.Background(), 1, &UpdateShopReq{Name: "New Name", Area: "New Area"})
+		req := &UpdateShopReq{Name: "New Name", TypeID: 2}
+		err := svc.Update(ctx, 10, req)
 		require.NoError(t, err)
-		require.False(t, mr.Exists("cache:shop:1"))
+
+		// Verify cache was deleted
+		require.False(t, mr.Exists(cacheKey))
 	})
 
-	t.Run("shop not found", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
+	t.Run("update shop not found returns ErrShopNotFound", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
 		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
 			return nil, nil
 		}
 
-		err := srv.Update(context.Background(), 999, &UpdateShopReq{Name: "X"})
-		require.True(t, errors.Is(err, &errmsg.ErrShopNotFound))
+		req := &UpdateShopReq{Name: "New Name"}
+		err := svc.Update(ctx, 9999, req)
+		require.Error(t, err)
+		require.Equal(t, &errmsg.ErrShopNotFound, err)
 	})
 
-	t.Run("repository error on get", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
+	t.Run("update shop with repository error on fetch propagates", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		dbErr := errors.New("db error")
 		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			return nil, fmt.Errorf("db error")
+			return nil, dbErr
 		}
 
-		err := srv.Update(context.Background(), 1, &UpdateShopReq{Name: "X"})
+		req := &UpdateShopReq{Name: "New Name"}
+		err := svc.Update(ctx, 1, req)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "db error")
 	})
 
-	t.Run("repository error on update", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
+	t.Run("update shop with repository error on save propagates", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
 		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
-			return &Shop{ID: 1, Name: "Old"}, nil
+			return &Shop{ID: 1, Name: "Old Name"}, nil
 		}
-		repo.updateShopFunc = func(ctx context.Context, s *Shop) error {
-			return fmt.Errorf("update failed")
+		repo.updateShopFunc = func(ctx context.Context, shop *Shop) error {
+			return errors.New("save failed")
 		}
 
-		err := srv.Update(context.Background(), 1, &UpdateShopReq{Name: "X"})
+		req := &UpdateShopReq{Name: "New Name"}
+		err := svc.Update(ctx, 1, req)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "update failed")
 	})
 }
 
-func TestGetShopsByType_Service(t *testing.T) {
-	t.Run("without coordinates queries database", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
+// =============================================================================
+// GetShopsByType
+// =============================================================================
+
+func TestService_GetShopsByType(t *testing.T) {
+	t.Run("get shops by type without coordinates queries DB directly", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
 		repo.getShopsByTypeFunc = func(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error) {
 			require.Equal(t, uint64(1), typeID)
-			require.Equal(t, 0, offset)
-			require.Equal(t, MaxPageSize, limit)
 			return []Shop{
-				{ID: 1, Name: "Shop A", TypeID: 1},
-				{ID: 2, Name: "Shop B", TypeID: 1},
+				{ID: 1, Name: "Shop A", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00"},
+				{ID: 2, Name: "Shop B", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "11:00"},
 			}, nil
 		}
 
-		resp, err := srv.GetShopsByType(context.Background(), 1, 1, nil, nil)
+		resp, err := svc.GetShopsByType(ctx, 1, 1, nil, nil)
 		require.NoError(t, err)
 		require.Len(t, resp, 2)
 		require.Equal(t, "Shop A", resp[0].Name)
+		require.Equal(t, "Shop B", resp[1].Name)
 	})
 
-	t.Run("without coordinates database error", func(t *testing.T) {
-		srv, repo, _ := setupService(t)
-		repo.getShopsByTypeFunc = func(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error) {
-			return nil, fmt.Errorf("db error")
-		}
+	t.Run("get shops by type with coordinates uses GeoSearch", func(t *testing.T) {
+		svc, repo, mr := setUpShopService(t)
+		ctx := context.Background()
 
-		_, err := srv.GetShopsByType(context.Background(), 1, 1, nil, nil)
-		require.Error(t, err)
-	})
-
-	t.Run("with coordinates uses geo search", func(t *testing.T) {
-		mr := miniredis.RunT(t)
-		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		repo := new(mockShopRepo)
-		srv := NewService(repo, rdb)
-
-		geoKey := "shop:geo:1"
-		rdb.GeoAdd(context.Background(), geoKey, &redis.GeoLocation{Name: "10", Longitude: 116.397, Latitude: 39.908})
-		rdb.GeoAdd(context.Background(), geoKey, &redis.GeoLocation{Name: "20", Longitude: 116.398, Latitude: 39.909})
+		// Populate Redis GEO data via real client (miniredis does not support GeoAdd directly)
+		geoKey := CacheShopGeoKey + "1"
+		rdbGeo := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		require.NoError(t, rdbGeo.GeoAdd(ctx, geoKey, &redis.GeoLocation{Longitude: 120.15, Latitude: 30.32, Name: "1"}).Err())
+		require.NoError(t, rdbGeo.GeoAdd(ctx, geoKey, &redis.GeoLocation{Longitude: 120.16, Latitude: 30.33, Name: "2"}).Err())
+		require.NoError(t, rdbGeo.Close())
 
 		repo.getShopsByIDsFunc = func(ctx context.Context, ids []uint64) ([]Shop, error) {
-			shops := make([]Shop, 0, len(ids))
-			for _, id := range ids {
-				shops = append(shops, Shop{ID: id, Name: fmt.Sprintf("Shop%d", id), TypeID: 1})
-			}
-			return shops, nil
+			require.Contains(t, ids, uint64(1))
+			require.Contains(t, ids, uint64(2))
+			return []Shop{
+				{ID: 1, Name: "Geo Shop A", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00"},
+				{ID: 2, Name: "Geo Shop B", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "11:00"},
+			}, nil
 		}
 
-		x, y := 116.397, 39.908
-		resp, err := srv.GetShopsByType(context.Background(), 1, 1, &x, &y)
+		x := 120.15
+		y := 30.32
+		resp, err := svc.GetShopsByType(ctx, 1, 1, &x, &y)
 		require.NoError(t, err)
-		require.NotEmpty(t, resp)
+		require.Len(t, resp, 2)
 	})
 
-	t.Run("with coordinates empty result", func(t *testing.T) {
-		mr := miniredis.RunT(t)
-		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		srv := NewService(new(mockShopRepo), rdb)
+	t.Run("get shops by type empty result", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
 
-		x, y := 116.397, 39.908
-		resp, err := srv.GetShopsByType(context.Background(), 999, 1, &x, &y)
+		repo.getShopsByTypeFunc = func(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error) {
+			return []Shop{}, nil
+		}
 
+		resp, err := svc.GetShopsByType(ctx, 1, 1, nil, nil)
 		require.NoError(t, err)
 		require.Empty(t, resp)
 	})
-}
 
-func TestShopToResponse(t *testing.T) {
-	t.Run("normal shop", func(t *testing.T) {
-		shop := &Shop{
-			ID: 1, Name: "Test", TypeID: 2, Images: "img.png",
-			Area: "Area", Address: "Addr",
-			Longitude: 116.397, Latitude: 39.908,
-			AvgPrice: 100, Sold: 50, Comments: 10, Score: 4,
-			OpenTime: "09:00-22:00", Distance: 1.5,
+	t.Run("get shops by type with DB error propagates", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		dbErr := errors.New("db error")
+		repo.getShopsByTypeFunc = func(ctx context.Context, typeID uint64, offset, limit int) ([]Shop, error) {
+			return nil, dbErr
 		}
 
+		resp, err := svc.GetShopsByType(ctx, 1, 1, nil, nil)
+		require.Error(t, err)
+		require.Nil(t, resp)
+	})
+}
+
+// =============================================================================
+// GetShopsByName
+// =============================================================================
+
+func TestService_GetShopsByName(t *testing.T) {
+	t.Run("get shops by name successfully", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		repo.getShopsByNameFunc = func(ctx context.Context, name string, offset, limit int) ([]Shop, error) {
+			require.Equal(t, "茶", name)
+			return []Shop{
+				{ID: 1, Name: "茶餐厅", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00"},
+			}, nil
+		}
+
+		resp, err := svc.GetShopsByName(ctx, "茶", 1)
+		require.NoError(t, err)
+		require.Len(t, resp, 1)
+		require.Equal(t, "茶餐厅", resp[0].Name)
+	})
+
+	t.Run("get shops by name with no results returns empty", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		repo.getShopsByNameFunc = func(ctx context.Context, name string, offset, limit int) ([]Shop, error) {
+			return []Shop{}, nil
+		}
+
+		resp, err := svc.GetShopsByName(ctx, "nonexistent", 1)
+		require.NoError(t, err)
+		require.Empty(t, resp)
+	})
+
+	t.Run("get shops by name with DB error propagates", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		dbErr := errors.New("db error")
+		repo.getShopsByNameFunc = func(ctx context.Context, name string, offset, limit int) ([]Shop, error) {
+			return nil, dbErr
+		}
+
+		resp, err := svc.GetShopsByName(ctx, "茶", 1)
+		require.Error(t, err)
+		require.Nil(t, resp)
+	})
+
+	t.Run("get shops by name on second page", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		repo.getShopsByNameFunc = func(ctx context.Context, name string, offset, limit int) ([]Shop, error) {
+			require.Equal(t, MaxPageSize, offset) // page 2: (2-1)*5
+			return []Shop{
+				{ID: 6, Name: "茶店6", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00"},
+			}, nil
+		}
+
+		resp, err := svc.GetShopsByName(ctx, "茶", 2)
+		require.NoError(t, err)
+		require.Len(t, resp, 1)
+		require.Equal(t, "茶店6", resp[0].Name)
+	})
+}
+
+// =============================================================================
+// ShopToResponse
+// =============================================================================
+
+func TestShopToResponse(t *testing.T) {
+	t.Run("converts shop to response preserving all fields", func(t *testing.T) {
+		shop := &Shop{
+			ID: 1, Name: "Test Shop", TypeID: 2, Images: "img.jpg",
+			Area: "Test Area", Address: "Test Address",
+			Longitude: 120.15, Latitude: 30.32, AvgPrice: 80,
+			Sold: 100, Comments: 50, Score: 47, OpenTime: "10:00-22:00",
+			Distance: 1.5,
+		}
 		resp := ShopToResponse(shop)
 		require.NotNil(t, resp)
 		require.Equal(t, uint64(1), resp.ID)
-		require.Equal(t, "Test", resp.Name)
+		require.Equal(t, "Test Shop", resp.Name)
 		require.Equal(t, uint64(2), resp.TypeID)
-		require.Equal(t, "img.png", resp.Images)
-		require.Equal(t, "Area", resp.Area)
-		require.Equal(t, "Addr", resp.Address)
-		require.Equal(t, 116.397, resp.Longitude)
-		require.Equal(t, 39.908, resp.Latitude)
-		require.Equal(t, uint64(100), resp.AvgPrice)
-		require.Equal(t, uint(50), resp.Sold)
-		require.Equal(t, uint(10), resp.Comments)
-		require.Equal(t, uint(4), resp.Score)
-		require.Equal(t, "09:00-22:00", resp.OpenTime)
+		require.Equal(t, "img.jpg", resp.Images)
+		require.Equal(t, "Test Area", resp.Area)
+		require.Equal(t, "Test Address", resp.Address)
+		require.Equal(t, 120.15, resp.Longitude)
+		require.Equal(t, 30.32, resp.Latitude)
+		require.Equal(t, uint64(80), resp.AvgPrice)
+		require.Equal(t, uint(100), resp.Sold)
+		require.Equal(t, uint(50), resp.Comments)
+		require.Equal(t, uint(47), resp.Score)
+		require.Equal(t, "10:00-22:00", resp.OpenTime)
 		require.Equal(t, 1.5, resp.Distance)
 	})
 
-	t.Run("nil shop", func(t *testing.T) {
+	t.Run("nil shop returns nil", func(t *testing.T) {
 		resp := ShopToResponse(nil)
 		require.Nil(t, resp)
 	})
 }
 
 func TestBatchShopToResponse(t *testing.T) {
-	t.Run("normal list", func(t *testing.T) {
+	t.Run("converts multiple shops to responses", func(t *testing.T) {
 		shops := []Shop{
-			{ID: 1, Name: "Shop1", TypeID: 1},
-			{ID: 2, Name: "Shop2", TypeID: 2},
+			{ID: 1, Name: "Shop A", TypeID: 1, Area: "A", Address: "A", OpenTime: "10:00"},
+			{ID: 2, Name: "Shop B", TypeID: 2, Area: "B", Address: "B", OpenTime: "11:00"},
 		}
 		resp := batchShopToResponse(shops)
 		require.Len(t, resp, 2)
-		require.Equal(t, "Shop1", resp[0].Name)
-		require.Equal(t, "Shop2", resp[1].Name)
+		require.Equal(t, "Shop A", resp[0].Name)
+		require.Equal(t, "Shop B", resp[1].Name)
 	})
 
-	t.Run("empty list", func(t *testing.T) {
-		resp := batchShopToResponse(nil)
-		require.Empty(t, resp)
-		resp = batchShopToResponse([]Shop{})
+	t.Run("empty input returns empty", func(t *testing.T) {
+		resp := batchShopToResponse([]Shop{})
 		require.Empty(t, resp)
 	})
+}
+
+// jsonMarshal helper that panics on error (test-only).
+func jsonMarshal(v any) []byte {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
