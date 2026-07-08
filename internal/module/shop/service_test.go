@@ -75,7 +75,7 @@ func setUpShopService(t *testing.T) (*Service, *mockShopSvcRepo, *miniredis.Mini
 		require.NoError(t, rdb.Close())
 	})
 	repo := new(mockShopSvcRepo)
-	return NewService(repo, rdb), repo, mr
+	return NewService(repo, rdb, nil), repo, mr
 }
 
 // =============================================================================

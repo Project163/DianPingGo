@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"dianping/internal/cache"
 	"dianping/internal/config"
 	"dianping/internal/infra"
 	"dianping/internal/module/blog"
@@ -63,25 +64,26 @@ func NewApp(configPath string) (*App, error) {
 func (a *App) Start() error {
 	validator.InitValidator()
 	txManager := tx.NewGormManager(a.db)
+	refreshPool := cache.NewRefreshPool(a.rdb, 10, 20, 0.2)
 
 	userInfoRepo := userinfo.NewRepository(a.db)
 	userInfoSrv := userinfo.NewService(userInfoRepo)
 
 	userRepo := user.NewRepository(a.db)
-	userSrv := user.NewService(userRepo, a.rdb)
+	userSrv := user.NewService(userRepo, a.rdb, refreshPool)
 	userHandler := user.NewHandler(userSrv, userInfoSrv)
 
 	shopRepo := shop.NewRepository(a.db)
-	shopSrv := shop.NewService(shopRepo, a.rdb)
+	shopSrv := shop.NewService(shopRepo, a.rdb, refreshPool)
 	shopHandler := shop.NewHandler(shopSrv)
 
 	shopTypeRepo := shoptype.NewRepository(a.db)
-	shopTypeSrv := shoptype.NewService(shopTypeRepo, a.rdb)
+	shopTypeSrv := shoptype.NewService(shopTypeRepo, a.rdb, refreshPool)
 	shopTypeHandler := shoptype.NewHandler(shopTypeSrv)
 
 	voucherRepo := voucher.NewRepository(a.db)
 	seckillVoucherRepo := seckillvoucher.NewRepository(a.db)
-	voucherSrv := voucher.NewService(voucherRepo, a.rdb)
+	voucherSrv := voucher.NewService(voucherRepo, a.rdb, refreshPool)
 	voucherHandler := voucher.NewHandler(voucherSrv)
 
 	voucherOrderRepo := voucherorder.NewRepository(a.db)
@@ -137,6 +139,7 @@ func (a *App) Start() error {
 	if err := server.Shutdown(ctx); err != nil {
 		log.Fatalf("服务器关闭失败：%v", err)
 	}
+	refreshPool.Shutdown()
 	log.Println("服务器已成功关闭")
 
 	if a.voucherOrderSrv != nil {

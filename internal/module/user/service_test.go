@@ -66,7 +66,7 @@ func setUpUserService(t *testing.T) (*Service, *mockUserRepo, *miniredis.Minired
 		require.NoError(t, rdb.Close())
 	})
 	repo := newMockUserRepo()
-	return NewService(repo, rdb), repo, mr
+	return NewService(repo, rdb, nil), repo, mr
 }
 
 func TestService_Login(t *testing.T) {

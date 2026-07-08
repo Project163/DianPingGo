@@ -68,7 +68,7 @@ func setUpVoucherHandler(t *testing.T) (*gin.Engine, *mockVoucherRepoForHandler,
 	t.Cleanup(func() { require.NoError(t, rdb.Close()) })
 
 	repo := new(mockVoucherRepoForHandler)
-	svc := NewService(repo, rdb)
+	svc := NewService(repo, rdb, nil)
 	handler := NewHandler(svc)
 
 	r := gin.New()

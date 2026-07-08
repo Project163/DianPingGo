@@ -24,10 +24,10 @@ type Service struct {
 	rdb   redis.Cmdable
 }
 
-func NewService(repo VoucherRepository, rdb redis.Cmdable) *Service {
+func NewService(repo VoucherRepository, rdb redis.Cmdable, pool *cache.RefreshPool) *Service {
 	return &Service{
 		repo:  repo,
-		cache: cache.NewCacheClient(rdb),
+		cache: cache.NewCacheClient(rdb, pool),
 		rdb:   rdb,
 	}
 }

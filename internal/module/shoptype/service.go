@@ -21,11 +21,11 @@ type Service struct {
 	cache cache.CacheClient
 }
 
-func NewService(repo ShopTypeRepository, rdb redis.Cmdable) *Service {
+func NewService(repo ShopTypeRepository, rdb redis.Cmdable, pool *cache.RefreshPool) *Service {
 	return &Service{
 		repo:  repo,
 		rdb:   rdb,
-		cache: *cache.NewCacheClient(rdb),
+		cache: *cache.NewCacheClient(rdb, pool),
 	}
 }
 

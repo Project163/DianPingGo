@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -18,11 +19,17 @@ type RedisData struct {
 }
 
 type CacheClient struct {
-	rdb redis.Cmdable
+	rdb         redis.Cmdable
+	refreshPool *RefreshPool
+	jitterRatio float64
 }
 
-func NewCacheClient(rdb redis.Cmdable) *CacheClient {
-	return &CacheClient{rdb: rdb}
+func NewCacheClient(rdb redis.Cmdable, refreshPool *RefreshPool) *CacheClient {
+	return &CacheClient{
+		rdb:         rdb,
+		refreshPool: refreshPool,
+		jitterRatio: 0.2,
+	}
 }
 
 func mutexKey(key string) string {
@@ -129,7 +136,8 @@ func (c *CacheClient) QueryWithMutex(
 // 策略3: 逻辑过期 -> 避免缓存击穿
 // SetWithLogicalExpire 写入数据时附加逻辑过期时间
 // 物理上数据永不过期，查询时判断逻辑过期时间
-func (c *CacheClient) SetWithLogicalExpire(
+func SetWithLogicalExpire(
+	rdb redis.Cmdable,
 	ctx context.Context,
 	key string,
 	value any,
@@ -144,7 +152,24 @@ func (c *CacheClient) SetWithLogicalExpire(
 		ExpireAt: time.Now().Add(expire),
 	}
 	data, err := json.Marshal(rd)
-	return c.rdb.Set(ctx, key, data, 0).Err()
+	if err != nil {
+		return err
+	}
+	return rdb.Set(ctx, key, data, 0).Err()
+}
+
+func (c *CacheClient) SetWithLogicalExpire(
+	ctx context.Context,
+	key string,
+	value any,
+	expire time.Duration,
+) error {
+	return SetWithLogicalExpire(c.rdb, ctx, key, value, expire)
+}
+
+func (c *CacheClient) setWithJitter(ctx context.Context, key string, value any, baseTTL time.Duration) error {
+	jitter := time.Duration(rand.Int63n(int64(float64(baseTTL) * c.jitterRatio)))
+	return c.SetWithLogicalExpire(ctx, key, value, baseTTL+jitter)
 }
 
 // QueryWithLogicalExpire 查询时判断逻辑过期时间，过期则异步更新缓存
@@ -165,7 +190,7 @@ func (c *CacheClient) QueryWithLogicalExpire(
 			if data == nil {
 				return ErrDataNotFound
 			}
-			if err := c.SetWithLogicalExpire(ctx, key, data, LogicalExpire); err != nil {
+			if err := c.setWithJitter(ctx, key, data, LogicalExpire); err != nil {
 				return err
 			}
 			bytes, _ := json.Marshal(data)
@@ -191,17 +216,31 @@ func (c *CacheClient) QueryWithLogicalExpire(
 	if err != nil {
 		return err
 	}
-	if ok {
-		go func() {
-			bgCtx := context.Background()
-			defer c.rdb.Del(bgCtx, lockKey) // 释放锁
-			data, err := dbFunc()
-			if err != nil {
-				return
-			}
-			c.SetWithLogicalExpire(bgCtx, key, data, LogicalExpire)
-		}()
+	if !ok {
+		return nil
 	}
+	if c.refreshPool != nil {
+		job := refreshJob{
+			key:     key,
+			lockKey: lockKey,
+			baseTTL: LogicalExpire,
+			dbFunc:  dbFunc,
+		}
+		if !c.refreshPool.Submit(job) {
+			_ = c.rdb.Del(ctx, lockKey)
+		}
+		return nil
+	}
+	go func() {
+		bgCtx := context.Background()
+		defer c.rdb.Del(bgCtx, lockKey) // 释放锁
+		data, err := dbFunc()
+		if err != nil {
+			return
+		}
+		c.setWithJitter(bgCtx, key, data, LogicalExpire)
+	}()
+
 	return nil
 }
 

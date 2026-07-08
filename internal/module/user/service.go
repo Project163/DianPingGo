@@ -35,11 +35,11 @@ type Service struct {
 	rdb         redis.Cmdable
 }
 
-func NewService(repo UserRepository, rdb redis.Cmdable) *Service {
+func NewService(repo UserRepository, rdb redis.Cmdable, pool *cache.RefreshPool) *Service {
 	return &Service{
 		repo: repo,
 		// jwtSecret: []byte(secret),
-		cacheClient: cache.NewCacheClient(rdb),
+		cacheClient: cache.NewCacheClient(rdb, pool),
 		rdb:         rdb,
 	}
 }

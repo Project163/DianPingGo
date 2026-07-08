@@ -68,7 +68,7 @@ func setUpVoucherService(t *testing.T) (*Service, *mockVoucherRepo, *miniredis.M
 	})
 
 	repo := newMockVoucherRepo()
-	svc := NewService(repo, rdb)
+	svc := NewService(repo, rdb, nil)
 	return svc, repo, mr
 }
 

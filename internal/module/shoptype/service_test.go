@@ -56,7 +56,7 @@ func setUpShopTypeService(t *testing.T) (*Service, *mockShopTypeSvcRepo, *minire
 		require.NoError(t, rdb.Close())
 	})
 	repo := new(mockShopTypeSvcRepo)
-	return NewService(repo, rdb), repo, mr
+	return NewService(repo, rdb, nil), repo, mr
 }
 
 // =============================================================================
