@@ -149,6 +149,14 @@ func (s *Service) GetShopsByType(ctx context.Context, typeID uint64, current int
 	if err != nil {
 		return nil, err
 	}
+	if len(results) == 0 {
+		offset := (current - 1) * MaxPageSize
+		shops, err := s.repo.GetShopsByType(ctx, typeID, offset, MaxPageSize)
+		if err != nil {
+			return nil, err
+		}
+		return batchShopToResponse(shops), nil
+	}
 	if len(results) <= from {
 		return []QueryShopResp{}, nil
 	}

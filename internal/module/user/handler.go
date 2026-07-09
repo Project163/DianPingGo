@@ -101,7 +101,7 @@ func (h *Handler) Logout(ctx *gin.Context) {
 // SendCode 发送验证码处理函数
 func (h *Handler) SendCode(ctx *gin.Context) {
 	var req SendCodeReq
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	if err := ctx.ShouldBind(&req); err != nil {
 		response.Fail(ctx, errmsg.NewError(errmsg.ErrInvalidParam, err))
 		return
 	}

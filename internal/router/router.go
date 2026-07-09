@@ -48,13 +48,13 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 		user := api.Group("/user")
 		{
 			user.POST("/login/password", userHandler.Login)
-			user.POST("/login/code", userHandler.CodeLogin)
+			user.POST("/login", userHandler.CodeLogin)
 			user.POST("/code", userHandler.SendCode)
 			user.GET("/:id", userHandler.GetUserByID)
 			user.GET("/info/:id", userHandler.GetUserInfoByID)
 		}
 
-		shop := api.Group("/shops")
+		shop := api.Group("/shop")
 		{
 			shop.POST("", shopHandler.CreateShop)
 			shop.GET("/:id", shopHandler.GetShopByID)
@@ -73,7 +73,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 		{
 			voucher.POST("/normal", voucherHandler.CreateVoucher)
 			voucher.POST("/seckill", voucherHandler.CreateSeckillVoucher)
-			voucher.GET("/shop/:shop_id", voucherHandler.GetVoucherByShopID)
+			voucher.GET("/list/:shop_id", voucherHandler.GetVoucherByShopID)
 			voucher.GET("/:id", voucherHandler.GetVoucherByID)
 		}
 
@@ -85,21 +85,19 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 
 		blog := api.Group("/blog")
 		{
-			blog.GET("/blog/hot", blogHandler.GetBlogsHot)
-			blog.GET("/blog/likes/:id", blogHandler.GetBlogLikesByID)
-			blog.GET("/:id", blogHandler.GetBlogByID)
+			blog.GET("/hot", blogHandler.GetBlogsHot)
+			blog.GET("/likes/:id", blogHandler.GetBlogLikesByID)
 		}
 
 		auth := api.Group("")
 		auth.Use(middleware.AuthMiddleware(rdb))
 		{
-			auth.POST("/seckill/:voucherId", voucherOrderHandler.SeckillVoucher)
+			auth.POST("/voucher-order/seckill/:voucherId", voucherOrderHandler.SeckillVoucher)
 			auth.GET("/order/:id", voucherOrderHandler.GetVoucherOrderByID)
-
-			auth.GET("/user/me", userHandler.GetSelf)
 
 			user := auth.Group("/user")
 			{
+				user.GET("/me", userHandler.GetSelf)
 				user.GET("/sign/count", userHandler.SignCount)
 				user.PUT("/sign", userHandler.Sign)
 				user.POST("/logout", userHandler.Logout)
@@ -108,6 +106,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 			blog := auth.Group("/blog")
 			{
 				blog.POST("", blogHandler.CreateBlog)
+				blog.GET("/:id", blogHandler.GetBlogByID)
 				blog.GET("/of/me", blogHandler.GetBlogSelf)
 				blog.PUT("/like/:id", blogHandler.LikeBlog)
 				blog.GET("/of/user/:id", blogHandler.GetBlogByUserID)

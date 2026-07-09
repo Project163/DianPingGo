@@ -377,9 +377,7 @@ func TestHandler_SendCode(t *testing.T) {
 			require.Equal(t, "13800138000", req.Phone)
 			return &SendCodeResp{Message: "发送成功"}, nil
 		}
-		reqBody := []byte(`{"phone":"13800138000"}`)
-		req := httptest.NewRequest(http.MethodPost, "/api/user/code", bytes.NewBuffer(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/user/code?phone=13800138000", nil)
 
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
@@ -397,9 +395,7 @@ func TestHandler_SendCode(t *testing.T) {
 			t.Fatalf("service should not be called when binding fails")
 			return nil, nil
 		}
-		reqBody := []byte(`{"phone":"invalid"}`)
-		req := httptest.NewRequest(http.MethodPost, "/api/user/code", bytes.NewBuffer(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/user/code?phone=invalid", nil)
 
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
@@ -414,9 +410,7 @@ func TestHandler_SendCode(t *testing.T) {
 		userSrv.sendCodeFunc = func(ctx context.Context, req *SendCodeReq) (*SendCodeResp, error) {
 			return nil, &errmsg.ErrTooManyRequests
 		}
-		reqBody := []byte(`{"phone":"13800138000"}`)
-		req := httptest.NewRequest(http.MethodPost, "/api/user/code", bytes.NewBuffer(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/user/code?phone=13800138000", nil)
 
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)

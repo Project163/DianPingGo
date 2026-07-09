@@ -236,7 +236,7 @@ func (s *Service) SendCode(ctx context.Context, req *SendCodeReq) (*SendCodeResp
 
 	fmt.Printf("发送验证码 %s 到手机号 %s\n", code, phone)
 	return &SendCodeResp{
-		Message: "发送成功",
+		Message: "发送成功, 验证码为: " + code,
 	}, nil
 }
 

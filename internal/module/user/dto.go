@@ -21,7 +21,7 @@ type LoginResp struct {
 
 // SendCodeReq 发送验证码请求参数
 type SendCodeReq struct {
-	Phone string `json:"phone" binding:"required,len=11,zh_mobile"`
+	Phone string `json:"phone" form:"phone" binding:"required,len=11,zh_mobile"`
 }
 
 // SendCodeResp 发送验证码响应数据
@@ -31,8 +31,8 @@ type SendCodeResp struct {
 
 // CodeLoginReq 验证码登录请求参数
 type CodeLoginReq struct {
-	Phone string `json:"phone" binding:"required,len=11,zh_mobile"`
-	Code  string `json:"code" binding:"required,len=6"`
+	Phone string `json:"phone" form:"phone" binding:"required,len=11,zh_mobile"`
+	Code  string `json:"code" form:"code" binding:"required,len=6"`
 }
 
 // CreateUserReq 创建用户请求参数

@@ -20,3 +20,5 @@ doc/
 
 # Coverage
 coverage.*
+
+nginx-1.18.0/

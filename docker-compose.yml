@@ -48,6 +48,18 @@ services:
       retries: 20
     restart: unless-stopped
 
+  nginx:
+    image: nginx:stable-alpine
+    container_name: dianping-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/html/hmdp:/usr/share/nginx/html:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
 volumes:
   mysql_data:
   redis_data:
