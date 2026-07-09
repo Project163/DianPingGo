@@ -73,7 +73,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 		{
 			voucher.POST("/normal", voucherHandler.CreateVoucher)
 			voucher.POST("/seckill", voucherHandler.CreateSeckillVoucher)
-			voucher.GET("/shop/:shopid", voucherHandler.GetVoucherByShopID)
+			voucher.GET("/shop/:shop_id", voucherHandler.GetVoucherByShopID)
 			voucher.GET("/:id", voucherHandler.GetVoucherByID)
 		}
 

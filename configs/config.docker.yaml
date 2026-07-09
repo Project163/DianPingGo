@@ -1,0 +1,35 @@
+server:
+  port: 8081
+  mode: release
+
+mysql:
+  host: "mysql"
+  port: 3306
+  user: "root"
+  password: "root"
+  dbname: "hmdp"
+
+  max_idle_conns: 20
+  max_open_conns: 100
+  conn_max_lifetime: 3600
+  conn_max_idle_time: 300
+
+redis:
+  addr: "redis:6379"
+  password: ""
+  db: 0
+
+  pool_size: 10
+  min_idle_conns: 5
+  conn_max_lifetime: 3600
+  conn_max_idle_time: 300
+
+upload:
+  dir: "/app/uploads"
+  max_size: 52428800
+  allowed_types:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+    - ".gif"
+    - ".webp"
