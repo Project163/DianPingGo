@@ -1,6 +1,7 @@
 package shop
 
 import (
+	"context"
 	"dianping/pkg/errmsg"
 	"dianping/pkg/response"
 	"fmt"
@@ -9,11 +10,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct {
-	srv *Service
+type ShopService interface {
+	CreateShop(ctx context.Context, shop *Shop) error
+	GetShopByID(ctx context.Context, id uint64) (*QueryShopResp, error)
+	GetShopByIDWithMutex(ctx context.Context, id uint64) (*QueryShopResp, error)
+	GetShopByIDWithLogicalExpire(ctx context.Context, id uint64) (*QueryShopResp, error)
+	Update(ctx context.Context, id uint64, req *UpdateShopReq) error
+	GetShopsByType(ctx context.Context, typeID uint64, current int, x, y *float64) ([]QueryShopResp, error)
+	GetShopsByName(ctx context.Context, name string, current int) ([]QueryShopResp, error)
 }
 
-func NewHandler(srv *Service) *Handler {
+type Handler struct {
+	srv ShopService
+}
+
+func NewHandler(srv ShopService) *Handler {
 	return &Handler{srv: srv}
 }
 

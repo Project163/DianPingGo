@@ -172,6 +172,10 @@ func (c *CacheClient) setWithJitter(ctx context.Context, key string, value any, 
 	return c.SetWithLogicalExpire(ctx, key, value, baseTTL+jitter)
 }
 
+func genUniqueID() string {
+	return fmt.Sprintf("%d_%d", time.Now().UnixNano(), rand.Int63())
+}
+
 // QueryWithLogicalExpire 查询时判断逻辑过期时间，过期则异步更新缓存
 func (c *CacheClient) QueryWithLogicalExpire(
 	ctx context.Context,
@@ -212,33 +216,31 @@ func (c *CacheClient) QueryWithLogicalExpire(
 
 	// 逻辑过期，尝试获取互斥锁更新缓存
 	lockKey := mutexKey(key)
-	ok, err := c.rdb.SetNX(ctx, lockKey, "1", 10*time.Second).Result()
-	if err != nil {
-		return err
-	}
-	if !ok {
+	lockValue := genUniqueID()
+	ok, err := c.rdb.SetNX(ctx, lockKey, lockValue, 15*time.Second).Result()
+	if err != nil || !ok {
 		return nil
 	}
 	if c.refreshPool != nil {
 		job := refreshJob{
-			key:     key,
-			lockKey: lockKey,
-			baseTTL: LogicalExpire,
-			dbFunc:  dbFunc,
+			key:       key,
+			lockKey:   lockKey,
+			lockValue: lockValue,
+			baseTTL:   LogicalExpire,
+			dbFunc:    dbFunc,
 		}
 		if !c.refreshPool.Submit(job) {
-			_ = c.rdb.Del(ctx, lockKey)
+			_ = c.rdb.Eval(ctx, releaseLua, []string{lockKey}, lockValue).Err()
 		}
 		return nil
 	}
 	go func() {
 		bgCtx := context.Background()
-		defer c.rdb.Del(bgCtx, lockKey) // 释放锁
+		defer c.rdb.Eval(bgCtx, releaseLua, []string{lockKey}, lockValue).Err()
 		data, err := dbFunc()
-		if err != nil {
-			return
+		if err == nil || data != nil {
+			c.setWithJitter(bgCtx, key, data, LogicalExpire)
 		}
-		c.setWithJitter(bgCtx, key, data, LogicalExpire)
 	}()
 
 	return nil

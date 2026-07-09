@@ -3,15 +3,21 @@ package upload
 import (
 	"dianping/pkg/errmsg"
 	"dianping/pkg/response"
+	"io"
 
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct {
-	srv *Service
+type UploadService interface {
+	UploadImage(r io.Reader, originalName string, size int64) (string, error)
+	DeleteImage(filename string) error
 }
 
-func NewHandler(service *Service) *Handler {
+type Handler struct {
+	srv UploadService
+}
+
+func NewHandler(service UploadService) *Handler {
 	return &Handler{
 		srv: service,
 	}

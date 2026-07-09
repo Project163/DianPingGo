@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"log"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -10,10 +11,11 @@ import (
 )
 
 type refreshJob struct {
-	key     string
-	lockKey string
-	baseTTL time.Duration
-	dbFunc  func() (any, error)
+	key       string
+	lockKey   string
+	lockValue string
+	baseTTL   time.Duration
+	dbFunc    func() (any, error)
 }
 
 type RefreshPool struct {
@@ -21,6 +23,8 @@ type RefreshPool struct {
 	jobs        chan refreshJob
 	wg          sync.WaitGroup
 	jitterRatio float64
+	rand        *rand.Rand
+	mu          sync.Mutex
 }
 
 func NewRefreshPool(rdb redis.Cmdable, workers, queueSize int, jitterRatio float64) *RefreshPool {
@@ -57,16 +61,20 @@ func (p *RefreshPool) worker() {
 	}
 }
 
+const releaseLua = `
+if redis.call('get', KEYS[1]) == ARGV[1] then
+	return redis.call('del', KEYS[1])
+else
+	return 0
+end`
+
 func (p *RefreshPool) execute(job refreshJob) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("cache refresh panic: key=%s, panic=%v", job.key, r)
 		}
-	}()
-
-	bgCtx := context.Background()
-	defer func() {
-		_ = p.rdb.Del(bgCtx, job.lockKey)
+		bgCtx := context.Background()
+		_ = p.rdb.Eval(bgCtx, releaseLua, []string{job.lockKey}, job.lockValue).Err()
 	}()
 
 	data, err := job.dbFunc()
@@ -75,18 +83,23 @@ func (p *RefreshPool) execute(job refreshJob) {
 	}
 
 	effectiveTTL := p.jitteredTTL(job.baseTTL)
-	_ = SetWithLogicalExpire(p.rdb, bgCtx, job.key, data, effectiveTTL)
+	_ = SetWithLogicalExpire(p.rdb, context.Background(), job.key, data, effectiveTTL)
 }
 
 func (p *RefreshPool) jitteredTTL(baseTTL time.Duration) time.Duration {
 	if p.jitterRatio <= 0 {
 		return baseTTL
 	}
-	jitterMax := time.Duration(float64(baseTTL) * p.jitterRatio)
-	if jitterMax <= 0 {
-		return baseTTL
+
+	p.mu.Lock()
+	jitterMax := int64(float64(baseTTL) * p.jitterRatio)
+	var jitter time.Duration
+	if jitterMax > 0 {
+		jitter = time.Duration(p.rand.Int63n(jitterMax))
 	}
-	return jitterMax
+	p.mu.Unlock()
+
+	return jitter
 }
 
 func (p *RefreshPool) Submit(job refreshJob) bool {

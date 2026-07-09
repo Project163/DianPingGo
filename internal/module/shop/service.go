@@ -61,7 +61,7 @@ func (s *Service) GetShopByID(ctx context.Context, id uint64) (*QueryShopResp, e
 		}
 		return nil, err
 	}
-	return ShopToResponse(&shop), nil
+	return shopToResponse(&shop), nil
 }
 
 func (s *Service) GetShopByIDWithMutex(ctx context.Context, id uint64) (*QueryShopResp, error) {
@@ -81,7 +81,7 @@ func (s *Service) GetShopByIDWithMutex(ctx context.Context, id uint64) (*QuerySh
 		}
 		return nil, err
 	}
-	return ShopToResponse(&shop), nil
+	return shopToResponse(&shop), nil
 }
 
 func (s *Service) GetShopByIDWithLogicalExpire(ctx context.Context, id uint64) (*QueryShopResp, error) {
@@ -103,7 +103,7 @@ func (s *Service) GetShopByIDWithLogicalExpire(ctx context.Context, id uint64) (
 		return nil, err
 	}
 	fmt.Printf("商户信息: %+v\n", shop)
-	return ShopToResponse(&shop), nil
+	return shopToResponse(&shop), nil
 }
 
 func (s *Service) Update(ctx context.Context, id uint64, req *UpdateShopReq) error {
@@ -178,7 +178,7 @@ func (s *Service) GetShopsByType(ctx context.Context, typeID uint64, current int
 	})
 	resp := make([]QueryShopResp, len(shops))
 	for i, shop := range shops {
-		r := ShopToResponse(&shop)
+		r := shopToResponse(&shop)
 		r.Distance = distanceMap[shop.ID]
 		resp[i] = *r
 	}
@@ -198,12 +198,12 @@ func (s *Service) GetShopsByName(ctx context.Context, name string, current int) 
 func batchShopToResponse(shops []Shop) []QueryShopResp {
 	resps := make([]QueryShopResp, len(shops))
 	for i, shop := range shops {
-		resps[i] = *ShopToResponse(&shop)
+		resps[i] = *shopToResponse(&shop)
 	}
 	return resps
 }
 
-func ShopToResponse(shop *Shop) *QueryShopResp {
+func shopToResponse(shop *Shop) *QueryShopResp {
 	if shop == nil {
 		return nil
 	}

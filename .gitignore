@@ -17,3 +17,6 @@ Thumbs.db
 
 # Doc
 doc/
+
+# Coverage
+coverage.*

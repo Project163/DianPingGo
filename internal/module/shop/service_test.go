@@ -545,7 +545,7 @@ func TestShopToResponse(t *testing.T) {
 			Sold: 100, Comments: 50, Score: 47, OpenTime: "10:00-22:00",
 			Distance: 1.5,
 		}
-		resp := ShopToResponse(shop)
+		resp := shopToResponse(shop)
 		require.NotNil(t, resp)
 		require.Equal(t, uint64(1), resp.ID)
 		require.Equal(t, "Test Shop", resp.Name)
@@ -564,7 +564,7 @@ func TestShopToResponse(t *testing.T) {
 	})
 
 	t.Run("nil shop returns nil", func(t *testing.T) {
-		resp := ShopToResponse(nil)
+		resp := shopToResponse(nil)
 		require.Nil(t, resp)
 	})
 }

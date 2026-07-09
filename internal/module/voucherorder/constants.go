@@ -14,5 +14,5 @@ const (
 	MaxRetries       = 3                    // 最大重试次数
 	RetryKey         = "stream:order:retry" // 重试计数的Redis key
 	DeadStreamKey    = "stream:order:dead"  // 死信队列的Redis key
-	PendingBatchSize = 5 // 批量处理待处理消息的数量
+	PendingBatchSize = 5                    // 批量处理待处理消息的数量
 )

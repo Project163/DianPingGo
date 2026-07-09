@@ -26,9 +26,9 @@ import (
 // =============================================================================
 
 type mockVoucherOrderRepoForHandler struct {
-	createVoucherOrderFunc   func(ctx context.Context, order *VoucherOrder) error
+	createVoucherOrderFunc    func(ctx context.Context, order *VoucherOrder) error
 	countByUserAndVoucherFunc func(ctx context.Context, userID uint64, voucherID uint64) (int64, error)
-	getVoucherOrderByIDFunc  func(ctx context.Context, orderID uint64) (*VoucherOrder, error)
+	getVoucherOrderByIDFunc   func(ctx context.Context, orderID uint64) (*VoucherOrder, error)
 }
 
 func (m *mockVoucherOrderRepoForHandler) CreateVoucherOrder(ctx context.Context, order *VoucherOrder) error {

@@ -55,7 +55,7 @@ redis.call('DECRBY', stockKey, 1)
 
 redis.call('SADD', orderKey, userId)
 
-redis.call('XADD', streamKey, '*', 'userId', userId, 'voucherId', voucherId, 'orderId', orderId)
+redis.call('XADD', streamKey, '*', 'user_id', userId, 'voucher_id', voucherId, 'order_id', orderId)
 
 return 0
 `)
@@ -106,7 +106,10 @@ func (s *Service) Start() {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
 	// 在服务启动时创建消费者组，组键为 StreamOrderKey，组名为 StreamGroupName，起始ID为 "0"
-	s.rdb.XGroupCreateMkStream(context.Background(), StreamOrderKey, StreamGroupName, "0")
+	if err := s.rdb.XGroupCreateMkStream(context.Background(), StreamOrderKey, StreamGroupName, "0").Err(); err != nil {
+		log.Printf("创建消费者组失败：%v", err)
+		return
+	}
 
 	go s.consumeNewMessages()
 	go s.consumePendingMessages()
@@ -217,6 +220,9 @@ func (s *Service) consumeNewMessages() {
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
+			}
+			if errors.Is(err, redis.Nil) {
+				continue
 			}
 			log.Printf("读取Stream新消息失败：%v", err)
 			continue

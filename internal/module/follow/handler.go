@@ -1,7 +1,9 @@
 package follow
 
 import (
+	"context"
 	"dianping/internal/middleware"
+	"dianping/internal/module/user"
 	"dianping/pkg/errmsg"
 	"dianping/pkg/response"
 	"fmt"
@@ -10,11 +12,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct {
-	srv *Service
+type FollowService interface {
+	Follow(ctx context.Context, follow *Follow) error
+	Unfollow(ctx context.Context, follow *Follow) error
+	IsFollowed(ctx context.Context, userID, followUserID uint64) (bool, error)
+	FollowCommon(ctx context.Context, userID1, userID2 uint64) ([]user.UserDTO, error)
+	ListFollowedUserIDs(ctx context.Context, userID uint64) ([]uint64, error)
+	ListFollowerUserIDs(ctx context.Context, userID uint64) ([]uint64, error)
 }
 
-func NewHandler(srv *Service) *Handler {
+type Handler struct {
+	srv FollowService
+}
+
+func NewHandler(srv FollowService) *Handler {
 	return &Handler{
 		srv: srv,
 	}

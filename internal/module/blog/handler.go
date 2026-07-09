@@ -1,7 +1,9 @@
 package blog
 
 import (
+	"context"
 	"dianping/internal/middleware"
+	"dianping/internal/module/user"
 	"dianping/pkg/errmsg"
 	"dianping/pkg/response"
 	"strconv"
@@ -9,11 +11,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct {
-	srv *Service
+type BlogService interface {
+	CreateBlog(ctx context.Context, blog *Blog) (uint64, error)
+	LikeBlog(ctx context.Context, blogID uint64, userID uint64) error
+	QueryHotBlog(ctx context.Context, currentUserID uint64, current int) ([]Blog, error)
+	QueryBlogByID(ctx context.Context, blogID uint64, currentUserID uint64) (*Blog, error)
+	QueryBlogLikesByID(ctx context.Context, blogID uint64) ([]user.UserDTO, error)
+	QueryBlogsByUserID(ctx context.Context, targetUserID uint64, currentUserID uint64, current int) ([]Blog, error)
+	QueryBlogsOfFollow(ctx context.Context, currentUserID uint64, max int64, offset int64) (*ScrollResult, error)
 }
 
-func NewHandler(srv *Service) *Handler {
+type Handler struct {
+	srv BlogService
+}
+
+func NewHandler(srv BlogService) *Handler {
 	return &Handler{srv: srv}
 }
 
