@@ -22,3 +22,5 @@ doc/
 coverage.*
 
 nginx-1.18.0/
+
+TODO.md

@@ -32,13 +32,18 @@ func (h *Handler) SeckillVoucher(ctx *gin.Context) {
 		return
 	}
 
-	var req SeckillReq
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	voucherIdStr := ctx.Param("voucher_id")
+	if voucherIdStr == "" {
+		response.Fail(ctx, &errmsg.ErrInvalidParam)
+		return
+	}
+	voucherId, err := strconv.ParseUint(voucherIdStr, 10, 64)
+	if err != nil {
 		response.Fail(ctx, &errmsg.ErrInvalidParam)
 		return
 	}
 
-	orderID, err := h.srv.SeckillVoucher(ctx.Request.Context(), req.VoucherID, userID.(uint64))
+	orderID, err := h.srv.SeckillVoucher(ctx.Request.Context(), voucherId, userID.(uint64))
 	if err != nil {
 		response.Fail(ctx, err)
 		return

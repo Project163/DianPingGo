@@ -115,7 +115,7 @@ func TestGetTraceID(t *testing.T) {
 		w := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(w)
 		ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-		ctx.Set("traceId", "test-trace-123")
+		ctx.Set("trace_id", "test-trace-123")
 
 		if got := GetTraceID(ctx); got != "test-trace-123" {
 			t.Errorf("GetTraceID() = %v, want %v", got, "test-trace-123")

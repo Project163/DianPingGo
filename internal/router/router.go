@@ -92,7 +92,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 		auth := api.Group("")
 		auth.Use(middleware.AuthMiddleware(rdb))
 		{
-			auth.POST("/voucher-order/seckill/:voucherId", voucherOrderHandler.SeckillVoucher)
+			auth.POST("/voucher-order/seckill/:voucher_id", voucherOrderHandler.SeckillVoucher)
 			auth.GET("/order/:id", voucherOrderHandler.GetVoucherOrderByID)
 
 			user := auth.Group("/user")
@@ -114,7 +114,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 			}
 			follow := auth.Group("/follow")
 			{
-				follow.POST("/:id/:isFollow", followHandler.Follow)
+				follow.POST("/:id/:is_follow", followHandler.Follow)
 				follow.GET("/or/not/:id", followHandler.IsFollowed)
 				follow.GET("/common/:id", followHandler.FollowCommon)
 				follow.GET("/followed", followHandler.ListFollowedUserIDs)
