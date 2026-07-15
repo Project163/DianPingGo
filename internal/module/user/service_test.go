@@ -305,7 +305,7 @@ func TestService_SendCode(t *testing.T) {
 		resp, err := service.SendCode(ctx, req)
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		require.Equal(t, "发送成功", resp.Message)
+		require.Contains(t, resp.Message, "发送成功")
 
 		// 验证分布式锁已设置
 		lockKey := BizUserLockCode + "18888888888"

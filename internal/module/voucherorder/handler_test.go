@@ -100,11 +100,11 @@ func setUpVoucherOrderHandler(t *testing.T) (*gin.Engine, *mockVoucherOrderRepoF
 		ctx.Next()
 	})
 	{
-		auth.POST("/voucher-order/seckill/:id", handler.SeckillVoucher)
+		auth.POST("/voucher-order/seckill/:voucher_id", handler.SeckillVoucher)
 	}
 
 	// Routes without auth
-	r.GET("/voucher-order/:id", handler.GetVoucherOrderByID)
+	r.GET("/voucher-order/:voucher_id", handler.GetVoucherOrderByID)
 
 	return r, orderRepo, mr
 }
@@ -181,7 +181,7 @@ func TestHandler_SeckillVoucher(t *testing.T) {
 		r, _, _ := setUpVoucherOrderHandler(t)
 
 		reqBody := []byte(`{"voucher_id": 0}`)
-		req := httptest.NewRequest(http.MethodPost, "/api/voucher-order/seckill/100", bytes.NewBuffer(reqBody))
+		req := httptest.NewRequest(http.MethodPost, "/api/voucher-order/seckill/0", bytes.NewBuffer(reqBody))
 		req.Header.Set("Content-Type", "application/json")
 
 		w := httptest.NewRecorder()

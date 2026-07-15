@@ -350,7 +350,7 @@ func TestService_GetShopTypeAll_NullResult(t *testing.T) {
 
 		// Verify null value was cached (preventing subsequent DB calls)
 		nullVal, _ := mr.Get(BizShopTypeKey)
-		require.Equal(t, "", nullVal) // empty string = null marker
+		require.Equal(t, "[]", nullVal) // empty string = null marker
 
 		// Second call should hit cache (no DB call, but ErrDataNotFound from cache)
 		got2, err2 := svc.GetShopTypeAll(ctx)

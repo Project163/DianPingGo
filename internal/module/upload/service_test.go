@@ -209,7 +209,10 @@ func TestService_DeleteImage(t *testing.T) {
 
 		err = service.DeleteImage("mydir")
 		require.Error(t, err)
-		require.Equal(t, &errmsg.ErrInvalidParam, err)
+		var myErr *errmsg.CustomError
+		require.ErrorAs(t, err, &myErr)
+		require.Equal(t, errmsg.ErrInvalidParam.BusinessCode, myErr.BusinessCode)
+		require.Contains(t, myErr.Error(), "is a directory, not a file")
 	})
 }
 

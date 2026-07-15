@@ -247,9 +247,14 @@ func TestService_Unfollow(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the user was removed from the cache set
-		members, err := mr.SMembers(key)
+		exists := mr.Exists(key)
 		require.NoError(t, err)
-		require.NotContains(t, members, strconv.FormatUint(2, 10))
+
+		if exists == true {
+			members, err := mr.SMembers(key)
+			require.NoError(t, err)
+			require.NotContains(t, members, strconv.FormatUint(2, 10))
+		}
 	})
 }
 

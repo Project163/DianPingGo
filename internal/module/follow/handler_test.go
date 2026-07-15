@@ -103,7 +103,7 @@ func setUpFollowHandler(t *testing.T) (*gin.Engine, *mockFollowRepository, *mock
 		ctx.Next()
 	})
 	{
-		auth.POST("/:id/:isFollow", handler.Follow)
+		auth.POST("/:id/:is_follow", handler.Follow)
 		auth.GET("/or/not/:id", handler.IsFollowed)
 		auth.GET("/common/:id", handler.FollowCommon)
 		auth.GET("/followed", handler.ListFollowedUserIDs)
@@ -127,7 +127,7 @@ func setUpFollowHandlerNoAuth(t *testing.T) *gin.Engine {
 	handler := NewHandler(service)
 
 	r := gin.New()
-	r.POST("/api/follow/:id/:isFollow", handler.Follow)
+	r.POST("/api/follow/:id/:is_follow", handler.Follow)
 	r.GET("/api/follow/or/not/:id", handler.IsFollowed)
 	r.GET("/api/follow/common/:id", handler.FollowCommon)
 	r.GET("/api/follow/followed", handler.ListFollowedUserIDs)

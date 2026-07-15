@@ -148,7 +148,9 @@ func TestHandler_CreateShopType(t *testing.T) {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusOK, w.Code) // Empty body binds fine, handler calls service
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		body := decodebody(t, w)
+		require.Equal(t, false, body["success"])
 	})
 }
 
@@ -277,10 +279,9 @@ func TestHandler_GetShopTypeByID(t *testing.T) {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusOK, w.Code)
+		require.Equal(t, http.StatusNotFound, w.Code)
 		body := decodebody(t, w)
-		require.Equal(t, true, body["success"])
-		require.Nil(t, body["data"])
+		require.Equal(t, false, body["success"])
 	})
 }
 

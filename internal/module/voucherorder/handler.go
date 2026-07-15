@@ -38,7 +38,7 @@ func (h *Handler) SeckillVoucher(ctx *gin.Context) {
 		return
 	}
 	voucherId, err := strconv.ParseUint(voucherIdStr, 10, 64)
-	if err != nil {
+	if err != nil || voucherId == 0 {
 		response.Fail(ctx, &errmsg.ErrInvalidParam)
 		return
 	}
@@ -52,7 +52,7 @@ func (h *Handler) SeckillVoucher(ctx *gin.Context) {
 }
 
 func (h *Handler) GetVoucherOrderByID(ctx *gin.Context) {
-	orderIdStr := ctx.Param("id")
+	orderIdStr := ctx.Param("voucher_id")
 	if orderIdStr == "" {
 		response.Fail(ctx, &errmsg.ErrInvalidParam)
 		return

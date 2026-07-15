@@ -65,6 +65,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 
 		shoptype := api.Group("/shop-type")
 		{
+			shoptype.POST("", shopTypeHandler.CreateShopType)
 			shoptype.GET("/:id", shopTypeHandler.GetShopTypeByID)
 			shoptype.GET("/list", shopTypeHandler.GetShopTypeAll)
 		}
@@ -93,7 +94,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 		auth.Use(middleware.AuthMiddleware(rdb))
 		{
 			auth.POST("/voucher-order/seckill/:voucher_id", voucherOrderHandler.SeckillVoucher)
-			auth.GET("/order/:id", voucherOrderHandler.GetVoucherOrderByID)
+			auth.GET("/voucher-order/:voucher_id", voucherOrderHandler.GetVoucherOrderByID)
 
 			user := auth.Group("/user")
 			{

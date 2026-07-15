@@ -80,6 +80,7 @@ func (h *Handler) GetShopTypeByID(ctx *gin.Context) {
 	}
 	if shopType == nil {
 		response.Fail(ctx, &errmsg.ErrShopTypeNotFound)
+		return
 	}
 
 	response.OK(ctx, shopType)

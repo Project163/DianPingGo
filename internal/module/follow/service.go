@@ -139,31 +139,6 @@ func (s *Service) Unfollow(ctx context.Context, follow *Follow) error {
 		}
 		return err
 	}
-	// loaded, err := s.rdb.Exists(ctx, loadKey).Result()
-	// if err != nil {
-	// 	_ = s.rdb.Del(ctx, key, loadKey).Err()
-	// 	return nil
-	// }
-	// if loaded == 0 {
-	// 	return nil
-	// }
-	// pipe := s.rdb.TxPipeline()
-	// pipe.SRem(ctx, key, strconv.FormatUint(follow.FollowUserID, 10))
-	// // 如果Set删除了最后一个元素，Redis会自动删除该Set
-	// // 但是loadKey会保留，以表示已加载但为空的状态
-	// pipe.Expire(ctx, key, BizFollowerTTL)
-	// pipe.Expire(ctx, loadKey, BizFollowerTTL)
-	// _, err = pipe.Exec(ctx)
-	// if err != nil {
-	// 	_ = s.rdb.Del(ctx, key, loadKey).Err()
-	// }
-	// // 更新缓存
-	// // 直接删除缓存，下一次查询时会重新加载
-	// // 关注本身并不查询缓存，因此直接删除缓存等待真正的查询时进行重建即可
-	// err = s.rdb.Del(ctx, key, strconv.FormatUint(follow.FollowUserID, 10)).Err()
-	// if err != nil {
-	// 	return errmsg.NewError(errmsg.ErrInternalSec, err)
-	// }
 	return nil
 }
 

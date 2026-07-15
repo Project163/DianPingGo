@@ -6,9 +6,11 @@ import (
 	"errors"
 	"testing"
 
+	"dianping/internal/cache"
 	"dianping/pkg/errmsg"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -444,32 +446,48 @@ func TestService_GetShopsByType(t *testing.T) {
 		require.Equal(t, "Shop A", resp[0].Name)
 		require.Equal(t, "Shop B", resp[1].Name)
 	})
-
 	t.Run("get shops by type with coordinates uses GeoSearch", func(t *testing.T) {
-		svc, repo, mr := setUpShopService(t)
+		db, mock := redismock.NewClientMock()
+		srv, repo, _ := setUpShopService(t)
 		ctx := context.Background()
-
-		// Populate Redis GEO data via real client (miniredis does not support GeoAdd directly)
+		srv.cacheClient = cache.NewCacheClient(db, nil)
+		typeID := uint64(1)
 		geoKey := CacheShopGeoKey + "1"
-		rdbGeo := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		require.NoError(t, rdbGeo.GeoAdd(ctx, geoKey, &redis.GeoLocation{Longitude: 120.15, Latitude: 30.32, Name: "1"}).Err())
-		require.NoError(t, rdbGeo.GeoAdd(ctx, geoKey, &redis.GeoLocation{Longitude: 120.16, Latitude: 30.33, Name: "2"}).Err())
-		require.NoError(t, rdbGeo.Close())
+		x, y := 120.15, 30.32
+		expectedRedisResult := []redis.GeoLocation{
+			{Name: "1", Dist: 150.5},
+			{Name: "2", Dist: 300.2},
+		}
+		mock.ExpectGeoSearchLocation(geoKey, &redis.GeoSearchLocationQuery{
+			GeoSearchQuery: redis.GeoSearchQuery{
+				Longitude:  x,
+				Latitude:   y,
+				Radius:     GeoSearchRadius,
+				RadiusUnit: "m",
+				Sort:       "ASC",
+				Count:      5,
+			},
+			WithDist: true,
+		}).SetVal(expectedRedisResult)
 
 		repo.getShopsByIDsFunc = func(ctx context.Context, ids []uint64) ([]Shop, error) {
-			require.Contains(t, ids, uint64(1))
-			require.Contains(t, ids, uint64(2))
+			require.Equal(t, []uint64{1, 2}, ids)
 			return []Shop{
-				{ID: 1, Name: "Geo Shop A", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "10:00"},
-				{ID: 2, Name: "Geo Shop B", TypeID: 1, Area: "Area", Address: "Addr", OpenTime: "11:00"},
+				{ID: 2, Name: "Geo Shop B"},
+				{ID: 1, Name: "Geo Shop A"},
 			}, nil
 		}
-
-		x := 120.15
-		y := 30.32
-		resp, err := svc.GetShopsByType(ctx, 1, 1, &x, &y)
+		current := 1
+		resp, err := srv.GetShopsByType(ctx, typeID, current, &x, &y)
 		require.NoError(t, err)
 		require.Len(t, resp, 2)
+		require.Equal(t, uint64(1), resp[0].ID)
+		require.Equal(t, 150.5, resp[0].Distance)
+		require.Equal(t, uint64(2), resp[1].ID)
+		require.Equal(t, 300.2, resp[1].Distance)
+
+		require.NoError(t, mock.ExpectationsWereMet())
+
 	})
 
 	t.Run("get shops by type empty result", func(t *testing.T) {
