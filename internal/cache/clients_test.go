@@ -365,6 +365,11 @@ func TestGetOrLoadWithMutex(t *testing.T) {
 		require.Equal(t, shop, got)
 	})
 	t.Run("cache miss loader executes once and writes cache", func(t *testing.T) {
+		type testResult struct {
+			err   error
+			found bool
+			got   ShopFixture
+		}
 		client, _ := newTestCacheClient(t, nil)
 		var callCount int
 		var mu sync.Mutex
@@ -377,18 +382,25 @@ func TestGetOrLoadWithMutex(t *testing.T) {
 			return ShopFixture{ID: 2, Name: "db_shop"}, true, nil
 		}
 
+		var concurrentCount = 5
+		resChan := make(chan testResult, concurrentCount)
 		var wg sync.WaitGroup
 		for i := 0; i < 5; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				got, found, err := GetOrLoadWithMutex(context.Background(), client, "shop:2", time.Minute, time.Second, loader)
-				require.NoError(t, err)
-				require.True(t, found)
-				require.Equal(t, ShopFixture{ID: 2, Name: "db_shop"}, got)
+				resChan <- testResult{err: err, found: found, got: got}
 			}()
 		}
 		wg.Wait()
+		close(resChan)
+
+		for res := range resChan {
+			require.NoError(t, res.err)
+			require.True(t, res.found)
+			require.Equal(t, ShopFixture{ID: 2, Name: "db_shop"}, res.got)
+		}
 
 		require.Equal(t, 1, callCount, "loader should be executed exactly once")
 	})
@@ -541,15 +553,21 @@ func TestGetOrLoadWithLogicalExpire(t *testing.T) {
 		require.Equal(t, oldShop, got)
 
 		wg.Wait()
-		time.Sleep(10 * time.Millisecond)
+		require.Eventually(t, func() bool {
+			val, err := mr.Get(key)
+			if err != nil {
+				return false
+			}
 
-		val, err := mr.Get(key)
-		require.NoError(t, err)
-		var envelope RedisData
-		_ = json.Unmarshal([]byte(val), &envelope)
-		var cachedShop ShopFixture
-		_ = json.Unmarshal(envelope.Data, &cachedShop)
-		require.Equal(t, newShop, cachedShop)
+			var envelope RedisData
+			if err := json.Unmarshal([]byte(val), &envelope); err != nil {
+				return false
+			}
+			var cachedShop ShopFixture
+			_ = json.Unmarshal(envelope.Data, &cachedShop)
+
+			return cachedShop == newShop
+		}, 1*time.Second, 10*time.Millisecond, "Redis Cache data was not updated in time")
 	})
 	t.Run("multiple requests read same expired key only one loader runs", func(t *testing.T) {
 		client, _ := newTestCacheClient(t, nil)
@@ -581,8 +599,13 @@ func TestGetOrLoadWithLogicalExpire(t *testing.T) {
 		close(loaderBlock)
 		loaderWg.Wait()
 
-		time.Sleep(20 * time.Millisecond)
-		require.Equal(t, int32(1), loaderCallCount.Load())
+		require.Eventually(t, func() bool {
+			count := loaderCallCount.Load()
+			if count != int32(1) {
+				return false
+			}
+			return true
+		}, 1*time.Second, 20*time.Millisecond)
 	})
 	t.Run("refresh lock already exists do not start loader", func(t *testing.T) {
 		client, mr := newTestCacheClient(t, nil)

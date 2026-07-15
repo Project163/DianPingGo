@@ -138,8 +138,10 @@ func GetOrLoadWithMutex[T any](
 			return zero, false, fmt.Errorf("set mutex for %q failed: %w", key, err)
 		}
 		if locked {
+			loaderCtx, loaderCancel := context.WithTimeout(ctx, 8*time.Second)
+			defer loaderCancel()
 			val, found, loadErr := func() (resVal T, resFound bool, resErr error) {
-				defer func(k string, v interface{}) {
+				defer func(k string, v string) {
 					bgCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 					defer cancel()
 					releaseErr := client.rdb.Eval(bgCtx, releaseLua, []string{k}, v).Err()
@@ -161,7 +163,7 @@ func GetOrLoadWithMutex[T any](
 				if hit {
 					return val, found, nil
 				}
-				return loadAndCache(ctx, client, key, ttl, nullTTL, loader)
+				return loadAndCache(loaderCtx, client, key, ttl, nullTTL, loader)
 			}()
 			if loadErr != nil {
 				return zero, false, loadErr
@@ -257,8 +259,8 @@ func loadAndCacheWithLogicalExpire[T any](
 		return zero, false, nil
 	}
 
-	if err := SetWithLogicalExpire(client.rdb, ctx, key, data, logicalTTL); err != nil {
-		return zero, false, fmt.Errorf("set logical cache %q: %w", key, err)
+	if err := client.setWithJitter(ctx, key, data, logicalTTL); err != nil {
+		return zero, false, fmt.Errorf("set logical cache %q with jitter: %w", key, err)
 	}
 	return data, true, nil
 }
@@ -332,6 +334,11 @@ func scheduleLogicalRefresh[T any](
 		return
 	}
 
+	effectiveTTL := logicalTTL
+	if client.refreshPool != nil {
+		effectiveTTL = client.refreshPool.jitteredTTL(logicalTTL)
+	}
+
 	run := func() {
 		defer releaseRefreshLock(client, lockKey, lockVal)
 		baseCtx := context.WithoutCancel(ctx)
@@ -348,7 +355,7 @@ func scheduleLogicalRefresh[T any](
 			return
 		}
 
-		if err = SetWithLogicalExpire(client.rdb, bgCtx, key, data, logicalTTL); err != nil {
+		if err = SetWithLogicalExpire(client.rdb, bgCtx, key, data, effectiveTTL); err != nil {
 			log.Printf("failed to set logical expire for %q: %v", key, err)
 		}
 
@@ -376,101 +383,6 @@ func releaseRefreshLock(
 	_ = client.rdb.Eval(bgCtx, releaseLua, []string{lockKey}, lockVal).Err()
 }
 
-// // 策略1: 缓存空值 -> 避免缓存穿透
-// // 查缓存 -> 命中（含空值标记）直接返回 -> 不命中查数据库
-// // -> 有数据写缓存返回 / 无数据写空值标记（短TTL）返回
-// func (c *CacheClient) QueryWithPassThrough(
-// 	ctx context.Context,
-// 	key string,
-// 	result any,
-// 	ttl time.Duration,
-// 	nullTTL time.Duration,
-// 	dbFunc func() (any, error),
-// ) error {
-// 	val, err := c.rdb.Get(ctx, key).Result()
-// 	if err == nil {
-// 		if val == "" {
-// 			return ErrDataNotFound
-// 		}
-// 		return json.Unmarshal([]byte(val), result)
-// 	}
-// 	if !errors.Is(err, redis.Nil) {
-// 		return err
-// 	}
-
-// 	// 缓存未命中，查询数据库
-// 	data, err := dbFunc()
-// 	if err != nil {
-// 		return err
-// 	}
-// 	if data == nil {
-// 		// 数据库无数据，缓存空值标记
-// 		c.rdb.Set(ctx, key, "", nullTTL)
-// 		return ErrDataNotFound
-// 	}
-
-// 	// 数据库有数据，序列化写入缓存
-// 	bytes, _ := json.Marshal(data)
-// 	c.rdb.Set(ctx, key, bytes, ttl)
-
-// 	// 反序列化结果，保证和直接从缓存读取一致
-// 	return json.Unmarshal(bytes, result)
-// }
-
-// // 策略2: 互斥锁 -> 避免缓存击穿
-// // 查缓存 -> 命中直接返回 -> 不命中尝试获取互斥锁
-// // -> 获取成功查数据库 -> 有数据写缓存返回 / 无数据写空值标记（短TTL）返回 -> 释放锁
-// // -> 获取失败等待重试
-// func (c *CacheClient) QueryWithMutex(
-// 	ctx context.Context,
-// 	key string,
-// 	result any,
-// 	dbFunc func() (any, error),
-// ) error {
-// 	val, err := c.rdb.Get(ctx, key).Result()
-// 	if err == nil {
-// 		return json.Unmarshal([]byte(val), result)
-// 	}
-// 	if !errors.Is(err, redis.Nil) {
-// 		return err
-// 	}
-
-// 	lockKey := mutexKey(key)
-// 	// 尝试获取互斥锁
-// 	ok, err := c.rdb.SetNX(ctx, lockKey, "1", 10*time.Second).Result()
-// 	if err != nil {
-// 		return err
-// 	}
-// 	if ok {
-// 		val, err := c.rdb.Get(ctx, key).Result()
-// 		if err == nil {
-// 			c.rdb.Del(ctx, lockKey) // 释放锁
-// 			return json.Unmarshal([]byte(val), result)
-// 		}
-
-// 		data, err := dbFunc()
-// 		if err != nil {
-// 			c.rdb.Del(ctx, lockKey) // 释放锁
-// 			return err
-// 		}
-// 		// TODO: Waiting for fix
-// 		if data == nil {
-// 			c.rdb.Del(ctx, lockKey) // 释放锁
-// 			return ErrDataNotFound
-// 		}
-
-// 		bytes, _ := json.Marshal(data)
-// 		c.rdb.Set(ctx, key, bytes, 30*time.Minute)
-// 		c.rdb.Del(ctx, lockKey) // 释放锁
-
-// 		return json.Unmarshal(bytes, result)
-// 	}
-
-// 	time.Sleep(50 * time.Millisecond) // 等待重试
-// 	return c.QueryWithMutex(ctx, key, result, dbFunc)
-// }
-
-// 策略3: 逻辑过期 -> 避免缓存击穿
 // SetWithLogicalExpire 写入数据时附加逻辑过期时间
 // 物理上数据永不过期，查询时判断逻辑过期时间
 func SetWithLogicalExpire(
@@ -495,7 +407,7 @@ func SetWithLogicalExpire(
 	if err != nil {
 		return err
 	}
-	return rdb.Set(ctx, key, data, 0).Err()
+	return rdb.Set(ctx, key, data, 24*time.Hour).Err()
 }
 
 func (c *CacheClient) SetWithLogicalExpire(
@@ -508,83 +420,19 @@ func (c *CacheClient) SetWithLogicalExpire(
 }
 
 func (c *CacheClient) setWithJitter(ctx context.Context, key string, value any, baseTTL time.Duration) error {
-	jitter := time.Duration(rand.Int63n(int64(float64(baseTTL) * c.jitterRatio)))
-	return c.SetWithLogicalExpire(ctx, key, value, baseTTL+jitter)
+	effectiveTTL := baseTTL
+	if c.refreshPool != nil {
+		effectiveTTL = c.refreshPool.jitteredTTL(baseTTL)
+	} else {
+		jitter := time.Duration(rand.Int63n(int64(float64(baseTTL) * c.jitterRatio)))
+		effectiveTTL = baseTTL + jitter
+	}
+	return c.SetWithLogicalExpire(ctx, key, value, effectiveTTL)
 }
 
 func genUniqueID() string {
 	return fmt.Sprintf("%d_%d", time.Now().UnixNano(), rand.Int63())
 }
-
-// // QueryWithLogicalExpire 查询时判断逻辑过期时间，过期则异步更新缓存
-// func (c *CacheClient) QueryWithLogicalExpire(
-// 	ctx context.Context,
-// 	key string,
-// 	result any,
-// 	LogicalExpire time.Duration,
-// 	dbFunc func() (any, error),
-// ) error {
-// 	val, err := c.rdb.Get(ctx, key).Result()
-// 	if err != nil {
-// 		if errors.Is(err, redis.Nil) {
-// 			data, dbErr := dbFunc()
-// 			if dbErr != nil {
-// 				return dbErr
-// 			}
-// 			if data == nil {
-// 				return ErrDataNotFound
-// 			}
-// 			if err := c.setWithJitter(ctx, key, data, LogicalExpire); err != nil {
-// 				return err
-// 			}
-// 			bytes, _ := json.Marshal(data)
-// 			return json.Unmarshal(bytes, result)
-// 		}
-// 		return err
-// 	}
-
-// 	var rd RedisData
-// 	if err := json.Unmarshal([]byte(val), &rd); err != nil {
-// 		return fmt.Errorf("Cache: Unmarshal RedisData Failed")
-// 	}
-// 	if err := json.Unmarshal(rd.Data, result); err != nil {
-// 		return err
-// 	}
-// 	if time.Now().Before(rd.ExpireAt) {
-// 		return nil
-// 	}
-
-// 	// 逻辑过期，尝试获取互斥锁更新缓存
-// 	lockKey := mutexKey(key)
-// 	lockValue := genUniqueID()
-// 	ok, err := c.rdb.SetNX(ctx, lockKey, lockValue, 15*time.Second).Result()
-// 	if err != nil || !ok {
-// 		return nil
-// 	}
-// 	if c.refreshPool != nil {
-// 		job := refreshJob{
-// 			key:       key,
-// 			lockKey:   lockKey,
-// 			lockValue: lockValue,
-// 			baseTTL:   LogicalExpire,
-// 			dbFunc:    dbFunc,
-// 		}
-// 		if !c.refreshPool.Submit(job) {
-// 			_ = c.rdb.Eval(ctx, releaseLua, []string{lockKey}, lockValue).Err()
-// 		}
-// 		return nil
-// 	}
-// 	go func() {
-// 		bgCtx := context.Background()
-// 		defer c.rdb.Eval(bgCtx, releaseLua, []string{lockKey}, lockValue).Err()
-// 		data, err := dbFunc()
-// 		if err == nil || data != nil {
-// 			c.setWithJitter(bgCtx, key, data, LogicalExpire)
-// 		}
-// 	}()
-
-// 	return nil
-// }
 
 type GeoSearchResult struct {
 	Name     string  `json:"name"`
