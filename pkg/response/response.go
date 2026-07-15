@@ -2,6 +2,7 @@ package response
 
 import (
 	"dianping/pkg/errmsg"
+	"dianping/pkg/requestctx"
 	"errors"
 	"fmt"
 	"net/http"
@@ -58,12 +59,11 @@ func Fail(ctx *gin.Context, err error) {
 
 // GetTraceID 从Gin上下文中获取TraceID，如果不存在则返回空字符串
 func GetTraceID(ctx *gin.Context) string {
-	traceID, exists := ctx.Get("trace_id")
-	if !exists {
-		return ""
+	traceID, exists := ctx.Get(requestctx.GinTraceIDKey)
+	if exists {
+		if str, ok := traceID.(string); ok {
+			return str
+		}
 	}
-	if str, ok := traceID.(string); ok {
-		return str
-	}
-	return ""
+	return requestctx.TraceID(ctx.Request.Context())
 }

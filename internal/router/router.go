@@ -34,7 +34,10 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 		gin.SetMode(gin.DebugMode)
 	}
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(middleware.TraceIDMiddleware())
+	r.Use(gin.Logger())
+	r.Use(gin.Recovery())
 
 	r.Static("/blogs", config.GlobalConfig.Upload.Dir+"/blogs")
 
