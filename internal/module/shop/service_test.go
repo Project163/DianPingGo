@@ -159,17 +159,52 @@ func TestService_GetShopByID(t *testing.T) {
 	})
 
 	t.Run("cache miss with no DB record returns ErrShopNotFound", func(t *testing.T) {
-		svc, repo, _ := setUpShopService(t)
+		svc, repo, mr := setUpShopService(t)
 		ctx := context.Background()
 
-		repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
+		loadCount := 0
+		repo.getShopByIDFunc = func(
+			ctx context.Context,
+			id uint64,
+		) (*Shop, error) {
+			loadCount++
 			return nil, nil
 		}
 
 		resp, err := svc.GetShopByID(ctx, 9999)
-		require.Error(t, err)
+
+		require.ErrorIs(t, err, &errmsg.ErrShopNotFound)
 		require.Nil(t, resp)
-		require.Equal(t, &errmsg.ErrShopNotFound, err)
+		require.Equal(t, 1, loadCount)
+
+		cacheKey := CacheShopKey + "9999"
+		cached, cacheErr := mr.Get(cacheKey)
+		require.NoError(t, cacheErr)
+		require.Equal(t, "", cached)
+	})
+
+	t.Run("second request hits null cache", func(t *testing.T) {
+		svc, repo, _ := setUpShopService(t)
+		ctx := context.Background()
+
+		loadCount := 0
+		repo.getShopByIDFunc = func(
+			ctx context.Context,
+			id uint64,
+		) (*Shop, error) {
+			loadCount++
+			return nil, nil
+		}
+
+		resp1, err1 := svc.GetShopByID(ctx, 9999)
+		require.ErrorIs(t, err1, &errmsg.ErrShopNotFound)
+		require.Nil(t, resp1)
+
+		resp2, err2 := svc.GetShopByID(ctx, 9999)
+		require.ErrorIs(t, err2, &errmsg.ErrShopNotFound)
+		require.Nil(t, resp2)
+
+		require.Equal(t, 1, loadCount)
 	})
 
 	t.Run("get shop by ID with DB error propagates", func(t *testing.T) {

@@ -3,7 +3,6 @@ package shoptype
 import (
 	"context"
 	"dianping/internal/cache"
-	"errors"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -18,14 +17,14 @@ type ShopTypeRepository interface {
 type Service struct {
 	repo  ShopTypeRepository
 	rdb   redis.Cmdable
-	cache cache.CacheClient
+	cache *cache.CacheClient
 }
 
 func NewService(repo ShopTypeRepository, rdb redis.Cmdable, pool *cache.RefreshPool) *Service {
 	return &Service{
 		repo:  repo,
 		rdb:   rdb,
-		cache: *cache.NewCacheClient(rdb, pool),
+		cache: cache.NewCacheClient(rdb, pool),
 	}
 }
 
@@ -57,13 +56,24 @@ func (s *Service) GetShopTypeByID(ctx context.Context, shopTypeId uint64) (*Shop
 }
 
 func (s *Service) GetShopTypeAll(ctx context.Context) ([]ShopType, error) {
-	var types []ShopType
-	err := s.cache.QueryWithPassThrough(ctx, BizShopTypeKey, &types, BizShopTypeTTL, BizShopTypeNullTTL, func() (any, error) {
-		return s.repo.GetShopTypeAll(ctx)
-	})
-
-	if errors.Is(err, cache.ErrDataNotFound) {
+	types, found, err := cache.GetOrLoad(
+		ctx, s.cache, BizShopTypeKey, BizShopTypeTTL, BizShopTypeNullTTL,
+		func(ctx context.Context) ([]ShopType, bool, error) {
+			result, err := s.repo.GetShopTypeAll(ctx)
+			if err != nil {
+				return nil, false, err
+			}
+			if result == nil {
+				result = make([]ShopType, 0)
+			}
+			return result, true, nil
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
 		return []ShopType{}, nil
 	}
-	return types, err
+	return types, nil
 }

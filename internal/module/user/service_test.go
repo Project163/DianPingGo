@@ -505,22 +505,34 @@ func TestService_GetUserByID(t *testing.T) {
 		ctx := context.Background()
 
 		repo.getUserByIDFunc = func(ctx context.Context, userID uint64) (*User, error) {
+			require.Equal(t, uint64(9999), userID)
 			return nil, nil
 		}
 
-		// 已知行为：GetUserByID 返回 *User(nil) 装箱到 any 后不为 nil，
-		// QueryWithPassThrough 会将其 JSON 序列化为 "null" 写入缓存，
-		// 并反序列化得到零值 User 后返回 UserDTO，不报错。
 		dto, err := service.GetUserByID(ctx, 9999)
-		require.NoError(t, err)
-		require.NotNil(t, dto)
-		require.Equal(t, uint64(0), dto.ID)
-		require.Equal(t, "", dto.NickName)
+		require.ErrorIs(t, err, &errmsg.ErrUserNotFound)
+		require.Nil(t, dto)
 
-		// 验证缓存中存储了 "null"（非空值标记 ""）
 		cacheKey := CacheUserKey + strconv.FormatUint(9999, 10)
-		nullVal, _ := mr.Get(cacheKey)
-		require.Equal(t, "null", nullVal)
+		cached, err := mr.Get(cacheKey)
+		require.NoError(t, err)
+		require.Equal(t, "", cached)
+	})
+
+	t.Run("null cache hit does not query repository", func(t *testing.T) {
+		service, repo, mr := setUpUserService(t)
+		ctx := context.Background()
+
+		cacheKey := CacheUserKey + strconv.FormatUint(9999, 10)
+		mr.Set(cacheKey, "")
+
+		repo.getUserByIDFunc = func(ctx context.Context, userID uint64) (*User, error) {
+			t.Fatal("repository must not be called on null cache hit")
+			return nil, nil
+		}
+		dto, err := service.GetUserByID(ctx, 9999)
+		require.ErrorIs(t, err, &errmsg.ErrUserNotFound)
+		require.Nil(t, dto)
 	})
 }
 

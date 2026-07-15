@@ -93,10 +93,6 @@ func (h *Handler) GetVoucherByID(ctx *gin.Context) {
 		response.Fail(ctx, err)
 		return
 	}
-	if voucherResp == nil {
-		response.OK(ctx, nil)
-		return
-	}
 	response.OK(ctx, voucherResp)
 }
 

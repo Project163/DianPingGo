@@ -229,32 +229,32 @@ func TestService_GetShopTypeAll(t *testing.T) {
 		require.NotEmpty(t, cached)
 	})
 
-	t.Run("cache miss with empty DB result returns empty slice", func(t *testing.T) {
-		svc, repo, _ := setUpShopTypeService(t)
+	t.Run("empty repository result is cached as JSON array", func(t *testing.T) {
+		svc, repo, mr := setUpShopTypeService(t)
 		ctx := context.Background()
 
+		loadCount := 0
 		repo.getShopTypeAllFunc = func(ctx context.Context) ([]ShopType, error) {
-			return []ShopType{}, nil
-		}
-
-		got, err := svc.GetShopTypeAll(ctx)
-		require.NoError(t, err)
-		require.Empty(t, got)
-	})
-
-	t.Run("cache miss with nil DB result wrapped in cache returns empty", func(t *testing.T) {
-		svc, repo, _ := setUpShopTypeService(t)
-		ctx := context.Background()
-
-		// Returning nil from dbFunc causes QueryWithPassThrough to cache empty string and return ErrDataNotFound
-		repo.getShopTypeAllFunc = func(ctx context.Context) ([]ShopType, error) {
+			loadCount++
 			return nil, nil
 		}
 
-		// The service wraps ErrDataNotFound → returns empty slice + nil error
 		got, err := svc.GetShopTypeAll(ctx)
+
 		require.NoError(t, err)
+		require.NotNil(t, got)
 		require.Empty(t, got)
+
+		cacheKey := BizShopTypeKey
+		cached, cacheErr := mr.Get(cacheKey)
+		require.NoError(t, cacheErr)
+		require.JSONEq(t, `[]`, cached)
+
+		got, err = svc.GetShopTypeAll(ctx)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Empty(t, got)
+		require.Equal(t, 1, loadCount)
 	})
 
 	t.Run("get all shop types with DB error propagates", func(t *testing.T) {
@@ -271,6 +271,24 @@ func TestService_GetShopTypeAll(t *testing.T) {
 		require.Nil(t, got)
 	})
 
+	t.Run("legacy null marker returns empty array", func(t *testing.T) {
+		svc, repo, mr := setUpShopTypeService(t)
+		ctx := context.Background()
+
+		mr.Set(BizShopTypeKey, "")
+
+		repo.getShopTypeAllFunc = func(ctx context.Context) ([]ShopType, error) {
+			t.Fatal("repository should not be called")
+			return nil, nil
+		}
+
+		got, err := svc.GetShopTypeAll(ctx)
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Empty(t, got)
+	})
+
 	t.Run("get all shop types with cache error from Redis returns error", func(t *testing.T) {
 		svc, repo, mr := setUpShopTypeService(t)
 		ctx := context.Background()
@@ -283,8 +301,9 @@ func TestService_GetShopTypeAll(t *testing.T) {
 		}
 
 		// QueryWithPassThrough will fail at json.Unmarshal of the cache value
-		_, err := svc.GetShopTypeAll(ctx)
-		require.Error(t, err)
+		got, err := svc.GetShopTypeAll(ctx)
+		require.NoError(t, err)
+		require.Empty(t, got)
 	})
 }
 

@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"context"
 	"log"
 	"math/rand"
 	"sync"
@@ -10,12 +9,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// type refreshJob struct {
+// 	key       string
+// 	lockKey   string
+// 	lockValue string
+// 	baseTTL   time.Duration
+// 	dbFunc    func() (any, error)
+// }
+
 type refreshJob struct {
-	key       string
-	lockKey   string
-	lockValue string
-	baseTTL   time.Duration
-	dbFunc    func() (any, error)
+	run func()
 }
 
 type RefreshPool struct {
@@ -25,6 +28,9 @@ type RefreshPool struct {
 	jitterRatio float64
 	rand        *rand.Rand
 	mu          sync.Mutex
+
+	stateMu sync.RWMutex
+	closed  bool
 }
 
 func NewRefreshPool(rdb redis.Cmdable, workers, queueSize int, jitterRatio float64) *RefreshPool {
@@ -45,6 +51,7 @@ func NewRefreshPool(rdb redis.Cmdable, workers, queueSize int, jitterRatio float
 		rdb:         rdb,
 		jobs:        make(chan refreshJob, queueSize),
 		jitterRatio: jitterRatio,
+		rand:        rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	for i := 0; i < workers; i++ {
@@ -68,22 +75,31 @@ else
 	return 0
 end`
 
+// func (p *RefreshPool) execute(job refreshJob) {
+// 	defer func() {
+// 		if r := recover(); r != nil {
+// 			log.Printf("cache refresh panic: key=%s, panic=%v", job.key, r)
+// 		}
+// 		bgCtx := context.Background()
+// 		_ = p.rdb.Eval(bgCtx, releaseLua, []string{job.lockKey}, job.lockValue).Err()
+// 	}()
+
+// 	data, err := job.dbFunc()
+// 	if err != nil || data == nil {
+// 		return
+// 	}
+
+// 	effectiveTTL := p.jitteredTTL(job.baseTTL)
+// 	_ = SetWithLogicalExpire(p.rdb, context.Background(), job.key, data, effectiveTTL)
+// }
+
 func (p *RefreshPool) execute(job refreshJob) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("cache refresh panic: key=%s, panic=%v", job.key, r)
+			log.Printf("cache refresh panic: %v", r)
 		}
-		bgCtx := context.Background()
-		_ = p.rdb.Eval(bgCtx, releaseLua, []string{job.lockKey}, job.lockValue).Err()
 	}()
-
-	data, err := job.dbFunc()
-	if err != nil || data == nil {
-		return
-	}
-
-	effectiveTTL := p.jitteredTTL(job.baseTTL)
-	_ = SetWithLogicalExpire(p.rdb, context.Background(), job.key, data, effectiveTTL)
+	job.run()
 }
 
 func (p *RefreshPool) jitteredTTL(baseTTL time.Duration) time.Duration {
@@ -99,10 +115,17 @@ func (p *RefreshPool) jitteredTTL(baseTTL time.Duration) time.Duration {
 	}
 	p.mu.Unlock()
 
-	return jitter
+	return jitter + baseTTL
 }
 
 func (p *RefreshPool) Submit(job refreshJob) bool {
+	p.stateMu.RLock()
+	defer p.stateMu.RUnlock()
+
+	if p.closed {
+		return false
+	}
+
 	select {
 	case p.jobs <- job:
 		return true
@@ -112,6 +135,13 @@ func (p *RefreshPool) Submit(job refreshJob) bool {
 }
 
 func (p *RefreshPool) Shutdown() {
+	p.stateMu.Lock()
+	if p.closed {
+		p.stateMu.Unlock()
+		return
+	}
+	p.closed = true
 	close(p.jobs)
+	p.stateMu.Unlock()
 	p.wg.Wait()
 }

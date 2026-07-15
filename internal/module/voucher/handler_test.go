@@ -316,10 +316,10 @@ func TestHandler_GetVoucherByID(t *testing.T) {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusOK, w.Code)
+		require.Equal(t, http.StatusNotFound, w.Code)
 		body := decodebody(t, w)
-		require.Equal(t, true, body["success"])
-		require.Nil(t, body["data"])
+		require.Equal(t, false, body["success"])
+		require.Nil(t, float64(4801), body["code"])
 	})
 
 	t.Run("get voucher by ID with service error", func(t *testing.T) {

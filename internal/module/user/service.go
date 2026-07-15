@@ -290,15 +290,24 @@ func (s *Service) Register(ctx context.Context, req *CreateUserReq) (*User, erro
 func (s *Service) GetUserByID(ctx context.Context, userID uint64) (*UserDTO, error) {
 	key := CacheUserKey + strconv.FormatUint(userID, 10)
 	var user User
-	err := s.cacheClient.QueryWithPassThrough(ctx, key, &user,
-		CacheUserTTL, CacheNullTTL, func() (any, error) {
-			return s.repo.GetUserByID(ctx, userID)
-		})
+	user, found, err := cache.GetOrLoad(
+		ctx, s.cacheClient, key, CacheUserTTL, CacheNullTTL,
+		func(ctx context.Context) (User, bool, error) {
+			result, err := s.repo.GetUserByID(ctx, userID)
+			if err != nil {
+				return User{}, false, err
+			}
+			if result == nil {
+				return User{}, false, nil
+			}
+			return *result, true, nil
+		},
+	)
 	if err != nil {
-		if errors.Is(err, cache.ErrDataNotFound) {
-			return nil, &errmsg.ErrUserNotFound
-		}
 		return nil, err
+	}
+	if !found {
+		return nil, &errmsg.ErrUserNotFound
 	}
 	return &UserDTO{ID: user.ID, NickName: user.NickName, Icon: user.Icon}, nil
 }

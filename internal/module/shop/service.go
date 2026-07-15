@@ -4,7 +4,6 @@ import (
 	"context"
 	"dianping/internal/cache"
 	"dianping/pkg/errmsg"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -47,39 +46,46 @@ func (s *Service) GetShopByID(ctx context.Context, id uint64) (*QueryShopResp, e
 	key := fmt.Sprintf("%s%d", CacheShopKey, id)
 	var shop Shop
 
-	err := s.cacheClient.QueryWithPassThrough(
-		ctx, key, &shop,
-		CacheShopTTL, CacheNullTTL,
-		func() (any, error) {
-			return s.repo.GetShopByID(ctx, id)
+	shop, found, err := cache.GetOrLoad(
+		ctx, s.cacheClient, key, CacheShopTTL, CacheNullTTL,
+		func(ctx context.Context) (Shop, bool, error) {
+			result, err := s.repo.GetShopByID(ctx, id)
+			if err != nil {
+				return Shop{}, false, err
+			}
+			if result == nil {
+				return Shop{}, false, nil
+			}
+			return *result, true, nil
 		},
 	)
-
 	if err != nil {
-		if errors.Is(err, cache.ErrDataNotFound) {
-			return nil, &errmsg.ErrShopNotFound
-		}
 		return nil, err
+	}
+	if !found {
+		return nil, &errmsg.ErrShopNotFound
 	}
 	return shopToResponse(&shop), nil
 }
 
 func (s *Service) GetShopByIDWithMutex(ctx context.Context, id uint64) (*QueryShopResp, error) {
 	key := fmt.Sprintf("%s%d", CacheShopKey, id)
-	var shop Shop
-
-	err := s.cacheClient.QueryWithMutex(
-		ctx, key, &shop,
-		func() (any, error) {
-			return s.repo.GetShopByID(ctx, id)
-		},
-	)
-
+	shop, found, err := cache.GetOrLoadWithMutex(ctx, s.cacheClient, key, LogicalShopTTL, CacheNullTTL,
+		func(loadCtx context.Context) (Shop, bool, error) {
+			result, err := s.repo.GetShopByID(loadCtx, id)
+			if err != nil {
+				return Shop{}, false, err
+			}
+			if result == nil {
+				return Shop{}, false, nil
+			}
+			return *result, true, nil
+		})
 	if err != nil {
-		if errors.Is(err, cache.ErrDataNotFound) {
-			return nil, &errmsg.ErrShopNotFound
-		}
 		return nil, err
+	}
+	if !found {
+		return nil, &errmsg.ErrShopNotFound
 	}
 	return shopToResponse(&shop), nil
 }
@@ -88,21 +94,23 @@ func (s *Service) GetShopByIDWithLogicalExpire(ctx context.Context, id uint64) (
 	key := fmt.Sprintf("%s%d", CacheShopKey, id)
 	var shop Shop
 
-	err := s.cacheClient.QueryWithLogicalExpire(
-		ctx, key, &shop,
-		LogicalShopTTL,
-		func() (any, error) {
-			return s.repo.GetShopByID(ctx, id)
-		},
-	)
-
+	shop, found, err := cache.GetOrLoadWithLogicalExpire(ctx, s.cacheClient, key, LogicalShopTTL, CacheNullTTL,
+		func(loadCtx context.Context) (Shop, bool, error) {
+			result, err := s.repo.GetShopByID(loadCtx, id)
+			if err != nil {
+				return Shop{}, false, err
+			}
+			if result == nil {
+				return Shop{}, false, nil
+			}
+			return *result, true, nil
+		})
 	if err != nil {
-		if errors.Is(err, cache.ErrDataNotFound) {
-			return nil, &errmsg.ErrShopNotFound
-		}
 		return nil, err
 	}
-	fmt.Printf("商户信息: %+v\n", shop)
+	if !found {
+		return nil, &errmsg.ErrShopNotFound
+	}
 	return shopToResponse(&shop), nil
 }
 

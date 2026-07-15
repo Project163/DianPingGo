@@ -240,26 +240,32 @@ func TestService_GetVoucherByID(t *testing.T) {
 		mr.Set(cacheKey, "")
 
 		resp, err := svc.GetVoucherByID(ctx, 999)
-		require.NoError(t, err)
+		require.ErrorIs(t, err, &errmsg.ErrVoucherNotFound)
 		require.Nil(t, resp)
 	})
 
 	t.Run("DB returns nil record writes null marker and returns nil", func(t *testing.T) {
-		svc, repo, mr := setUpVoucherService(t)
+		svc, repo, _ := setUpVoucherService(t)
 		ctx := context.Background()
 
-		repo.getVoucherByIDFunc = func(ctx context.Context, id uint64) (*Voucher, error) {
+		loadCount := 0
+		repo.getVoucherByIDFunc = func(
+			ctx context.Context,
+			id uint64,
+		) (*Voucher, error) {
+			loadCount++
 			return nil, nil
 		}
 
-		resp, err := svc.GetVoucherByID(ctx, 999)
-		require.NoError(t, err)
-		require.Nil(t, resp)
+		first, err := svc.GetVoucherByID(ctx, 999)
+		require.ErrorIs(t, err, &errmsg.ErrVoucherNotFound)
+		require.Nil(t, first)
 
-		// Verify null marker was cached
-		cacheKey := fmt.Sprintf("%s%d", CacheVoucherKey, 999)
-		nullVal, _ := mr.Get(cacheKey)
-		require.Equal(t, "", nullVal)
+		second, err := svc.GetVoucherByID(ctx, 999)
+		require.ErrorIs(t, err, &errmsg.ErrVoucherNotFound)
+		require.Nil(t, second)
+
+		require.Equal(t, 1, loadCount)
 	})
 
 	t.Run("repository DB error is propagated", func(t *testing.T) {
@@ -352,6 +358,37 @@ func TestService_GetVoucherByShopID(t *testing.T) {
 		resps, err := svc.GetVoucherByShopID(ctx, 1)
 		require.Error(t, err)
 		require.Nil(t, resps)
+	})
+	t.Run("empty repository result is cached as JSON array", func(t *testing.T) {
+		svc, repo, mr := setUpVoucherService(t)
+		ctx := context.Background()
+
+		loadCount := 0
+		repo.getByShopIDFunc = func(
+			ctx context.Context,
+			shopID uint64,
+		) ([]Voucher, error) {
+			loadCount++
+			return nil, nil
+		}
+
+		result, err := svc.GetVoucherByShopID(ctx, 100)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Empty(t, result)
+
+		cacheKey := fmt.Sprintf("%s%d", CacheShopVoucherKey, 100)
+		cached, cacheErr := mr.Get(cacheKey)
+		require.NoError(t, cacheErr)
+		require.JSONEq(t, `[]`, cached)
+
+		// 第二次从缓存读取。
+		result, err = svc.GetVoucherByShopID(ctx, 100)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Empty(t, result)
+		require.Equal(t, 1, loadCount)
 	})
 }
 

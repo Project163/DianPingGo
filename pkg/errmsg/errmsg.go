@@ -55,7 +55,8 @@ var (
 	ErrUserAlreadyExists = CustomError{HttpCode: http.StatusConflict, BusinessCode: 4106, Message: "用户已存在"}
 
 	// 商户模块错误
-	ErrShopNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4201, Message: "商户不存在"}
+	ErrShopNotFound     = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4201, Message: "商户不存在"}
+	ErrShopTypeNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4202, Message: "商户类型不存在"}
 
 	// 订单模块错误
 	ErrNoStock       = CustomError{HttpCode: http.StatusBadRequest, BusinessCode: 4301, Message: "库存不足"}
@@ -75,4 +76,7 @@ var (
 
 	// 用户信息模块错误
 	ErrUserInfoNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4701, Message: "用户信息不存在"}
+
+	// 优惠券模块错误
+	ErrVoucherNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4801, Message: "优惠券不存在"}
 )

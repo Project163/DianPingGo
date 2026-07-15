@@ -4,6 +4,7 @@ import (
 	"context"
 	"dianping/internal/cache"
 	"dianping/internal/module/seckillvoucher"
+	"dianping/pkg/errmsg"
 	"fmt"
 
 	"github.com/redis/go-redis/v9"
@@ -19,16 +20,16 @@ type VoucherRepository interface {
 
 // Service 提供优惠券相关的业务逻辑
 type Service struct {
-	repo  VoucherRepository
-	cache *cache.CacheClient
-	rdb   redis.Cmdable
+	repo        VoucherRepository
+	cacheClient *cache.CacheClient
+	rdb         redis.Cmdable
 }
 
 func NewService(repo VoucherRepository, rdb redis.Cmdable, pool *cache.RefreshPool) *Service {
 	return &Service{
-		repo:  repo,
-		cache: cache.NewCacheClient(rdb, pool),
-		rdb:   rdb,
+		repo:        repo,
+		cacheClient: cache.NewCacheClient(rdb, pool),
+		rdb:         rdb,
 	}
 }
 
@@ -66,15 +67,20 @@ func (s *Service) GetVoucherByShopID(ctx context.Context, shopID uint64) ([]Vouc
 	var vouchers []Voucher
 
 	// 使用缓存控制策略查询优惠券列表
-	err := s.cache.QueryWithPassThrough(ctx, key, &vouchers, CacheShopVoucherTTL, CacheNullTTL,
-		func() (any, error) {
-			return s.repo.GetByShopID(ctx, shopID)
-		})
-
+	vouchers, _, err := cache.GetOrLoad(
+		ctx, s.cacheClient, key, CacheShopVoucherTTL, CacheNullTTL,
+		func(ctx context.Context) ([]Voucher, bool, error) {
+			result, err := s.repo.GetByShopID(ctx, shopID)
+			if err != nil {
+				return nil, false, err
+			}
+			if result == nil {
+				result = make([]Voucher, 0)
+			}
+			return result, true, nil
+		},
+	)
 	if err != nil {
-		if err == cache.ErrDataNotFound {
-			return []VoucherResp{}, nil
-		}
 		return nil, err
 	}
 	return toVoucherRespList(vouchers), nil
@@ -82,19 +88,25 @@ func (s *Service) GetVoucherByShopID(ctx context.Context, shopID uint64) ([]Vouc
 
 func (s *Service) GetVoucherByID(ctx context.Context, id uint64) (*VoucherResp, error) {
 	key := fmt.Sprintf("%s%d", CacheVoucherKey, id)
-	var voucher Voucher
-
 	// 使用缓存控制策略查询优惠券
-	err := s.cache.QueryWithPassThrough(ctx, key, &voucher, CacheVoucherTTL, CacheNullTTL,
-		func() (any, error) {
-			return s.repo.GetVoucherByID(ctx, id)
-		})
-
+	voucher, found, err := cache.GetOrLoad(
+		ctx, s.cacheClient, key, CacheVoucherTTL, CacheNullTTL,
+		func(ctx context.Context) (Voucher, bool, error) {
+			result, err := s.repo.GetVoucherByID(ctx, id)
+			if err != nil {
+				return Voucher{}, false, err
+			}
+			if result == nil {
+				return Voucher{}, false, nil
+			}
+			return *result, true, nil
+		},
+	)
 	if err != nil {
-		if err == cache.ErrDataNotFound {
-			return nil, nil
-		}
 		return nil, err
+	}
+	if !found {
+		return nil, &errmsg.ErrVoucherNotFound
 	}
 	voucherResp := &VoucherResp{
 		ID:          voucher.ID,
