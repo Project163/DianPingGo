@@ -3,8 +3,6 @@ package shoptype
 import (
 	"context"
 	"dianping/internal/cache"
-
-	"github.com/redis/go-redis/v9"
 )
 
 type ShopTypeRepository interface {
@@ -15,16 +13,14 @@ type ShopTypeRepository interface {
 }
 
 type Service struct {
-	repo  ShopTypeRepository
-	rdb   redis.Cmdable
-	cache *cache.CacheClient
+	repo        ShopTypeRepository
+	cacheClient *cache.CacheClient
 }
 
-func NewService(repo ShopTypeRepository, rdb redis.Cmdable, pool *cache.RefreshPool) *Service {
+func NewService(repo ShopTypeRepository, cacheClient *cache.CacheClient) *Service {
 	return &Service{
-		repo:  repo,
-		rdb:   rdb,
-		cache: cache.NewCacheClient(rdb, pool),
+		repo:        repo,
+		cacheClient: cacheClient,
 	}
 }
 
@@ -40,7 +36,7 @@ func (s *Service) UpdateShopType(ctx context.Context, shopType *ShopType) error 
 	if err := s.repo.UpdateShopType(ctx, shopType); err != nil {
 		return err
 	}
-	_ = s.cache.Del(ctx, BizShopTypeKey)
+	_ = s.cacheClient.Del(ctx, BizShopTypeKey)
 	return nil
 }
 
@@ -57,7 +53,7 @@ func (s *Service) GetShopTypeByID(ctx context.Context, shopTypeId uint64) (*Shop
 
 func (s *Service) GetShopTypeAll(ctx context.Context) ([]ShopType, error) {
 	types, found, err := cache.GetOrLoad(
-		ctx, s.cache, BizShopTypeKey, BizShopTypeTTL, BizShopTypeNullTTL,
+		ctx, s.cacheClient, "shop_type_all", BizShopTypeKey, BizShopTypeTTL, BizShopTypeNullTTL,
 		func(ctx context.Context) ([]ShopType, bool, error) {
 			result, err := s.repo.GetShopTypeAll(ctx)
 			if err != nil {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"testing"
 
-	"dianping/internal/cache"
 	"dianping/pkg/errmsg"
 
 	"github.com/alicebob/miniredis/v2"
@@ -77,7 +76,7 @@ func setUpShopService(t *testing.T) (*Service, *mockShopSvcRepo, *miniredis.Mini
 		require.NoError(t, rdb.Close())
 	})
 	repo := new(mockShopSvcRepo)
-	return NewService(repo, rdb, nil), repo, mr
+	return NewService(repo, newModuleTestCacheClient(t, rdb)), repo, mr
 }
 
 // =============================================================================
@@ -156,7 +155,7 @@ func TestService_GetShopByID(t *testing.T) {
 
 		// Verify result was written to cache
 		cacheKey := CacheShopKey + "2"
-		cached, _ := mr.Get(cacheKey)
+		cached := waitForModuleCacheValue(t, mr, cacheKey)
 		require.NotEmpty(t, cached)
 	})
 
@@ -180,13 +179,12 @@ func TestService_GetShopByID(t *testing.T) {
 		require.Equal(t, 1, loadCount)
 
 		cacheKey := CacheShopKey + "9999"
-		cached, cacheErr := mr.Get(cacheKey)
-		require.NoError(t, cacheErr)
+		cached := waitForModuleCacheValue(t, mr, cacheKey)
 		require.Equal(t, "", cached)
 	})
 
 	t.Run("second request hits null cache", func(t *testing.T) {
-		svc, repo, _ := setUpShopService(t)
+		svc, repo, mr := setUpShopService(t)
 		ctx := context.Background()
 
 		loadCount := 0
@@ -201,6 +199,7 @@ func TestService_GetShopByID(t *testing.T) {
 		resp1, err1 := svc.GetShopByID(ctx, 9999)
 		require.ErrorIs(t, err1, &errmsg.ErrShopNotFound)
 		require.Nil(t, resp1)
+		waitForModuleCacheValue(t, mr, CacheShopKey+"9999")
 
 		resp2, err2 := svc.GetShopByID(ctx, 9999)
 		require.ErrorIs(t, err2, &errmsg.ErrShopNotFound)
@@ -222,6 +221,25 @@ func TestService_GetShopByID(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, resp)
 	})
+}
+
+func TestService_GetShopByID_RedisUnavailable_FallbackToRepository(t *testing.T) {
+	rdb, redisMock := redismock.NewClientMock()
+	redisMock.ExpectGet(CacheShopKey + "12").SetErr(errors.New("redis unavailable"))
+	repo := new(mockShopSvcRepo)
+	repo.getShopByIDFunc = func(ctx context.Context, id uint64) (*Shop, error) {
+		require.Equal(t, uint64(12), id)
+		return &Shop{ID: 12, Name: "DB Shop"}, nil
+	}
+	svc := NewService(repo, newModuleTestCacheClientWithoutPool(t, rdb))
+
+	result, err := svc.GetShopByID(context.Background(), 12)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, uint64(12), result.ID)
+	require.Equal(t, "DB Shop", result.Name)
+	require.NoError(t, redisMock.ExpectationsWereMet())
 }
 
 // =============================================================================
@@ -450,7 +468,7 @@ func TestService_GetShopsByType(t *testing.T) {
 		db, mock := redismock.NewClientMock()
 		srv, repo, _ := setUpShopService(t)
 		ctx := context.Background()
-		srv.cacheClient = cache.NewCacheClient(db, nil)
+		srv.cacheClient = newModuleTestCacheClient(t, db)
 		typeID := uint64(1)
 		geoKey := CacheShopGeoKey + "1"
 		x, y := 120.15, 30.32
@@ -516,6 +534,40 @@ func TestService_GetShopsByType(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, resp)
 	})
+}
+
+func TestService_GetShopsByType_GeoUnavailable_FallbackToRepository(t *testing.T) {
+	rdb, redisMock := redismock.NewClientMock()
+	typeID := uint64(3)
+	x, y := 120.15, 30.32
+	geoKey := CacheShopGeoKey + "3"
+	redisMock.ExpectGeoSearchLocation(geoKey, &redis.GeoSearchLocationQuery{
+		GeoSearchQuery: redis.GeoSearchQuery{
+			Longitude:  x,
+			Latitude:   y,
+			Radius:     GeoSearchRadius,
+			RadiusUnit: "m",
+			Sort:       "ASC",
+			Count:      MaxPageSize,
+		},
+		WithDist: true,
+	}).SetErr(errors.New("redis unavailable"))
+	repo := new(mockShopSvcRepo)
+	repo.getShopsByTypeFunc = func(ctx context.Context, actualTypeID uint64, offset, limit int) ([]Shop, error) {
+		require.Equal(t, typeID, actualTypeID)
+		require.Equal(t, 0, offset)
+		require.Equal(t, MaxPageSize, limit)
+		return []Shop{{ID: 31, TypeID: typeID, Name: "DB Geo Fallback"}}, nil
+	}
+	svc := NewService(repo, newModuleTestCacheClientWithoutPool(t, rdb))
+
+	result, err := svc.GetShopsByType(context.Background(), typeID, 1, &x, &y)
+
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	require.Equal(t, uint64(31), result[0].ID)
+	require.Equal(t, "DB Geo Fallback", result[0].Name)
+	require.NoError(t, redisMock.ExpectationsWereMet())
 }
 
 // =============================================================================

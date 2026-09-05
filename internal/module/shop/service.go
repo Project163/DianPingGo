@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-
-	"github.com/redis/go-redis/v9"
 )
 
 type ShopRepository interface {
@@ -25,10 +23,10 @@ type Service struct {
 	cacheClient *cache.CacheClient
 }
 
-func NewService(repo ShopRepository, rdb redis.Cmdable, pool *cache.RefreshPool) *Service {
+func NewService(repo ShopRepository, cacheClient *cache.CacheClient) *Service {
 	return &Service{
 		repo:        repo,
-		cacheClient: cache.NewCacheClient(rdb, pool),
+		cacheClient: cacheClient,
 	}
 }
 
@@ -47,7 +45,7 @@ func (s *Service) GetShopByID(ctx context.Context, id uint64) (*QueryShopResp, e
 	var shop Shop
 
 	shop, found, err := cache.GetOrLoad(
-		ctx, s.cacheClient, key, CacheShopTTL, CacheNullTTL,
+		ctx, s.cacheClient, "shop_by_id", key, CacheShopTTL, CacheNullTTL,
 		func(ctx context.Context) (Shop, bool, error) {
 			result, err := s.repo.GetShopByID(ctx, id)
 			if err != nil {
@@ -153,13 +151,12 @@ func (s *Service) GetShopsByType(ctx context.Context, typeID uint64, current int
 	to := current * MaxPageSize
 
 	geoKey := fmt.Sprintf("%s%d", CacheShopGeoKey, typeID)
-	results, err := s.cacheClient.GeoSearch(ctx, geoKey, *x, *y, GeoSearchRadius, to)
-	if err != nil {
-		return nil, err
-	}
-	if len(results) == 0 {
+	results, err := s.cacheClient.GeoSearch(ctx, "shop_geo", geoKey, *x, *y, GeoSearchRadius, to)
+	if err != nil || len(results) == 0 {
 		offset := (current - 1) * MaxPageSize
-		shops, err := s.repo.GetShopsByType(ctx, typeID, offset, MaxPageSize)
+		shops, err := cache.LoadProtectedGeo(ctx, s.cacheClient, "shops_by_type", geoKey, "redis_error", func(ctx context.Context) ([]Shop, error) {
+			return s.repo.GetShopsByType(ctx, typeID, offset, MaxPageSize)
+		})
 		if err != nil {
 			return nil, err
 		}

@@ -4,782 +4,718 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 )
 
-type ShopFixture struct {
+type shopFixture struct {
 	ID   uint64 `json:"id"`
 	Name string `json:"name"`
 }
 
-func newTestCacheClient(t *testing.T, pool *RefreshPool) (*CacheClient, *miniredis.Miniredis) {
-	t.Helper()
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() {
-		require.NoError(t, rdb.Close())
-	})
-	return NewCacheClient(rdb, pool), mr
+func TestGetOrLoad_CacheHit_ReturnCachedValue(t *testing.T) {
+	env := newCacheTestEnv(t)
+	expected := shopFixture{ID: 1, Name: "cached"}
+	encoded, err := json.Marshal(expected)
+	assert.NoError(t, err)
+	env.redis.Set("shop:1", string(encoded))
+
+	actual, found, err := GetOrLoad(
+		context.Background(), env.client, "shop", "shop:1",
+		time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			t.Fatal("loader must not be called on a cache hit")
+			return shopFixture{}, false, nil
+		},
+	)
+
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, expected, actual)
+	assert.Equal(t, 1, env.metrics.value("cache_hit", "shop"))
 }
 
-func TestGetOrLoad(t *testing.T) {
-	t.Run("cache hit do not call loader", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		shopFixture := ShopFixture{ID: 1, Name: "cached"}
-		shopFixtureBytes, err := json.Marshal(shopFixture)
-		require.NoError(t, err)
-		shopFixtureStr := string(shopFixtureBytes)
-		mr.Set("shop:1", shopFixtureStr)
+func TestGetOrLoad_NullMarkerHit_ReturnNotFoundWithoutLoading(t *testing.T) {
+	testCases := map[string]string{
+		"empty_string":     "",
+		"legacy_json_null": "null",
+	}
+	for name, marker := range testCases {
+		t.Run(name, func(t *testing.T) {
+			env := newCacheTestEnv(t)
+			env.redis.Set("shop:missing", marker)
 
-		got, found, err := GetOrLoad(
-			context.Background(),
-			client,
-			"shop:1",
-			time.Minute,
-			time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				t.Fatal("loader must not be called")
-				return ShopFixture{}, false, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, ShopFixture{ID: 1, Name: "cached"}, got)
-	})
-	t.Run("not found", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		loadCount := 0
+			actual, found, err := GetOrLoad(
+				context.Background(), env.client, "shop", "shop:missing",
+				time.Minute, 30*time.Second,
+				func(context.Context) (shopFixture, bool, error) {
+					t.Fatal("loader must not be called on a null-cache hit")
+					return shopFixture{}, false, nil
+				},
+			)
 
-		key := "shop:999"
-
-		got, found, err := GetOrLoad(
-			context.Background(),
-			client,
-			key,
-			time.Minute,
-			time.Second*30,
-			func(ctx context.Context) (string, bool, error) {
-				loadCount++
-				return "", false, nil
-			},
-		)
-		require.NoError(t, err)
-		require.False(t, found)
-		require.Empty(t, got)
-		require.Equal(t, 1, loadCount)
-
-		cached, err := mr.Get(key)
-		require.NoError(t, err)
-		require.Equal(t, "", cached)
-	})
-
-	t.Run("null cache hit", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		loadCount := 0
-
-		key := "shop:999"
-		mr.Set(key, "")
-
-		_, found, err := GetOrLoad(
-			context.Background(),
-			client,
-			key,
-			time.Minute,
-			time.Second*30,
-			func(ctx context.Context) (string, bool, error) {
-				loadCount++
-				return "should not be there", false, nil
-			},
-		)
-
-		require.NoError(t, err)
-		require.False(t, found)
-		require.Equal(t, 0, loadCount)
-	})
-	t.Run("loader returns sentinel error", func(t *testing.T) {
-		client, _ := newTestCacheClient(t, nil)
-		expectedErr := errors.New("database connection timeout")
-		// 缓存未命中 → 进入 loadAndCache → loader 返回 expectedErr
-		// loadAndCache 中 loader 错误直接透传（无 %w 包裹），
-		// 所以 require.ErrorIs 能直接匹配
-		_, _, err := GetOrLoad(
-			context.Background(),
-			client,
-			"shop:1",
-			time.Minute,
-			time.Second*30,
-			func(ctx context.Context) (ShopFixture, bool, error) {
-				return ShopFixture{}, false, expectedErr
-			},
-		)
-		require.ErrorIs(t, err, expectedErr)
-	})
-	t.Run("found equal false return non zero should be zero", func(t *testing.T) {
-		client, _ := newTestCacheClient(t, nil)
-		shop, found, err := GetOrLoad(
-			context.Background(),
-			client,
-			"shop:1",
-			time.Minute,
-			time.Second*30,
-			func(ctx context.Context) (ShopFixture, bool, error) {
-				return ShopFixture{ID: 1, Name: "测试商户"}, false, nil
-			},
-		)
-		require.Zero(t, shop)
-		require.Equal(t, found, false)
-		require.NoError(t, err)
-	})
-	t.Run("found equal true redis should be zero", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		shop, found, err := GetOrLoad(
-			context.Background(),
-			client,
-			"shop:1",
-			time.Minute,
-			time.Second*30,
-			func(ctx context.Context) (ShopFixture, bool, error) {
-				return ShopFixture{}, true, nil
-			},
-		)
-		require.Zero(t, shop)
-		require.Equal(t, found, true)
-		require.NoError(t, err)
-
-		cached, err := mr.Get("shop:1")
-		require.JSONEq(t, `{"id":0,"name":""}`, cached)
-		require.NoError(t, err)
-	})
-	t.Run("json marshal failed", func(t *testing.T) {
-		client, _ := newTestCacheClient(t, nil)
-		type UnsupportedFixture struct {
-			Name string
-			Ch   chan int
-		}
-		shop, found, err := GetOrLoad(
-			context.Background(),
-			client,
-			"shop:1",
-			time.Minute,
-			time.Second*30,
-			func(ctx context.Context) (UnsupportedFixture, bool, error) {
-				return UnsupportedFixture{Name: "fail", Ch: make(chan int)}, true, nil
-			},
-		)
-		require.Error(t, err)
-		require.Zero(t, shop)
-		require.Equal(t, found, false)
-		require.Contains(t, err.Error(), "marshal cache")
-	})
-	t.Run("positive cache TTL expireation", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-
-		key := "shop:1"
-		ttl := 5 * time.Minute
-		nullTTL := 10 * time.Second
-		shop := ShopFixture{ID: 1, Name: "Active Shop"}
-
-		var loaderCalled int
-		got1, found1, err := GetOrLoad(
-			context.Background(), client, key, ttl, nullTTL,
-			func(ctx context.Context) (ShopFixture, bool, error) {
-				loaderCalled++
-				return shop, true, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found1)
-		require.Equal(t, got1, shop)
-		require.Equal(t, 1, loaderCalled)
-
-		got2, found2, err := GetOrLoad(
-			context.Background(), client, key, ttl, nullTTL,
-			func(context.Context) (ShopFixture, bool, error) {
-				loaderCalled++
-				return shop, true, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found2)
-		require.Equal(t, shop, got2)
-		require.Equal(t, 1, loaderCalled)
-
-		mr.FastForward(ttl + time.Second)
-		got3, found3, err := GetOrLoad(
-			context.Background(), client, key, ttl, nullTTL,
-			func(context.Context) (ShopFixture, bool, error) {
-				loaderCalled++
-				return shop, true, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found3)
-		require.Equal(t, shop, got3)
-		require.Equal(t, 2, loaderCalled)
-	})
-	t.Run("null cache TTL expiration", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-
-		key := "shop:null:2"
-		ttl := 5 * time.Minute
-		nullTTL := 10 * time.Second
-
-		var loaderCalled int
-		got1, found1, err := GetOrLoad(
-			context.Background(), client, key, ttl, nullTTL,
-			func(context.Context) (ShopFixture, bool, error) {
-				loaderCalled++
-				return ShopFixture{}, false, nil
-			},
-		)
-		require.NoError(t, err)
-		require.Zero(t, got1)
-		require.False(t, found1)
-		require.Equal(t, 1, loaderCalled)
-		got2, found2, err := GetOrLoad(
-			context.Background(), client, key, ttl, nullTTL,
-			func(context.Context) (ShopFixture, bool, error) {
-				loaderCalled++
-				return ShopFixture{}, false, nil
-			},
-		)
-		require.NoError(t, err)
-		require.Zero(t, got2)
-		require.False(t, found2)
-		require.Equal(t, 1, loaderCalled)
-		mr.FastForward(nullTTL + time.Second)
-
-		_, _, err = GetOrLoad(
-			context.Background(), client, key, ttl, nullTTL,
-			func(context.Context) (ShopFixture, bool, error) {
-				loaderCalled++
-				return ShopFixture{}, false, nil
-			},
-		)
-		require.NoError(t, err)
-		require.Equal(t, 2, loaderCalled)
-	})
-	t.Run("legacy json null", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-
-		mr.Set("shop:999", "null")
-
-		shop, found, err := GetOrLoad(
-			context.Background(),
-			client,
-			"shop:999",
-			time.Minute,
-			time.Second*30,
-			func(context.Context) (ShopFixture, bool, error) {
-				t.Fatal("loader should not be called")
-				return ShopFixture{}, false, nil
-			},
-		)
-
-		require.NoError(t, err)
-		require.False(t, found)
-		require.Zero(t, shop)
-	})
-	t.Run("corrupted cache reload", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		mr.Set("shop:1", "{broken-json")
-
-		loadCount := 0
-
-		got, found, err := GetOrLoad(
-			context.Background(),
-			client,
-			"shop:1",
-			time.Minute,
-			time.Second*30,
-			func(context.Context) (ShopFixture, bool, error) {
-				loadCount++
-				return ShopFixture{ID: 1, Name: "测试商户"}, true, nil
-			},
-		)
-
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, uint64(1), got.ID)
-		require.Equal(t, 1, loadCount)
-
-		cached, err := mr.Get("shop:1")
-		require.NoError(t, err)
-		require.JSONEq(t, `{"id":1,"name":"测试商户"}`, cached)
-	})
-
-	t.Run("redis error", func(t *testing.T) {
-		mr := miniredis.RunT(t)
-		rdb := redis.NewClient(&redis.Options{
-			Addr:         mr.Addr(),
-			DialTimeout:  50 * time.Millisecond,
-			ReadTimeout:  50 * time.Millisecond,
-			WriteTimeout: 50 * time.Millisecond,
+			assert.NoError(t, err)
+			assert.False(t, found)
+			assert.Zero(t, actual)
+			assert.Equal(t, 1, env.metrics.value("cache_hit", "shop"))
 		})
-		t.Cleanup(func() { _ = rdb.Close() })
-
-		client := NewCacheClient(rdb, nil)
-		mr.Close()
-		loaderCalled := false
-
-		_, _, err := GetOrLoad(
-			context.Background(),
-			client,
-			"shop:1",
-			time.Minute,
-			time.Second*30,
-			func(context.Context) (ShopFixture, bool, error) {
-				loaderCalled = true
-				return ShopFixture{}, false, nil
-			},
-		)
-
-		require.Error(t, err)
-		require.False(t, loaderCalled)
-	})
+	}
 }
 
-func TestGetOrLoadWithMutex(t *testing.T) {
-	t.Run("cache hit do not call loader", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		shop := ShopFixture{ID: 1, Name: "cached_shop"}
-		bytes, _ := json.Marshal(shop)
-		mr.Set("shop:1", string(bytes))
+func TestGetOrLoad_CacheMissFound_ReturnDatabaseValueAndWriteBackAsync(t *testing.T) {
+	env := newCacheTestEnv(t)
+	expected := shopFixture{ID: 2, Name: "database"}
 
-		got, found, err := GetOrLoadWithMutex(
-			context.Background(), client, "shop:1", time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				t.Fatal("loader must not be called")
-				return ShopFixture{}, false, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, shop, got)
-	})
-	t.Run("cache miss loader executes once and writes cache", func(t *testing.T) {
-		type testResult struct {
-			err   error
-			found bool
-			got   ShopFixture
+	actual, found, err := GetOrLoad(
+		context.Background(), env.client, "shop", "shop:2",
+		5*time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			return expected, true, nil
+		},
+	)
+
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, expected, actual)
+	assert.Eventually(t, func() bool {
+		cached, getErr := env.redis.Get("shop:2")
+		if getErr != nil {
+			return false
 		}
-		client, _ := newTestCacheClient(t, nil)
-		var callCount int
-		var mu sync.Mutex
-
-		loader := func(context.Context) (ShopFixture, bool, error) {
-			mu.Lock()
-			callCount++
-			mu.Unlock()
-			time.Sleep(50 * time.Millisecond)
-			return ShopFixture{ID: 2, Name: "db_shop"}, true, nil
-		}
-
-		var concurrentCount = 5
-		resChan := make(chan testResult, concurrentCount)
-		var wg sync.WaitGroup
-		for i := 0; i < 5; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				got, found, err := GetOrLoadWithMutex(context.Background(), client, "shop:2", time.Minute, time.Second, loader)
-				resChan <- testResult{err: err, found: found, got: got}
-			}()
-		}
-		wg.Wait()
-		close(resChan)
-
-		for res := range resChan {
-			require.NoError(t, res.err)
-			require.True(t, res.found)
-			require.Equal(t, ShopFixture{ID: 2, Name: "db_shop"}, res.got)
-		}
-
-		require.Equal(t, 1, callCount, "loader should be executed exactly once")
-	})
-	t.Run("empty cache hit do not call loader", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		mr.Set("shop:3", "")
-
-		got, found, err := GetOrLoadWithMutex(
-			context.Background(), client, "shop:3", time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				t.Fatal("loader must not be called for cached null/empty values")
-				return ShopFixture{}, false, nil
-			},
-		)
-		require.NoError(t, err)
-		require.False(t, found)
-		require.Equal(t, ShopFixture{}, got)
-	})
-	t.Run("corrupted JSON deleted and fallback to loader", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		mr.Set("shop:4", "{invalid-json")
-
-		var loaderCalled bool
-		got, found, err := GetOrLoadWithMutex(
-			context.Background(), client, "shop:4", time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				loaderCalled = true
-				return ShopFixture{ID: 4, Name: "recovered_shop"}, true, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.True(t, loaderCalled)
-		require.Equal(t, ShopFixture{ID: 4, Name: "recovered_shop"}, got)
-
-		require.True(t, mr.Exists("shop:4"))
-		val, _ := mr.Get("shop:4")
-		require.Contains(t, val, "recovered_shop")
-	})
-	t.Run("5. mutex released when loader returns error", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		expectedErr := errors.New("db error")
-
-		got, found, err := GetOrLoadWithMutex(
-			context.Background(), client, "shop:5", time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				return ShopFixture{}, false, expectedErr
-			},
-		)
-		require.ErrorIs(t, err, expectedErr)
-		require.False(t, found)
-		require.Equal(t, ShopFixture{}, got)
-
-		lockKey := "mutex:shop:5"
-		require.False(t, mr.Exists(lockKey), "mutex lock should be released after loader error")
-	})
-	t.Run("6. respond to ctx.Done while waiting for lock", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-
-		lockKey := "mutex:shop:6"
-		mr.Set(lockKey, "other_worker")
-
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-		defer cancel()
-
-		start := time.Now()
-		got, found, err := GetOrLoadWithMutex(
-			ctx, client, "shop:6", time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				return ShopFixture{ID: 6}, true, nil
-			},
-		)
-		duration := time.Since(start)
-
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-		require.False(t, found)
-		require.Equal(t, ShopFixture{}, got)
-		require.Less(t, duration, 200*time.Millisecond, "should return early upon context cancellation")
-	})
+		var decoded shopFixture
+		return json.Unmarshal([]byte(cached), &decoded) == nil && decoded == expected
+	}, time.Second, 10*time.Millisecond)
+	assert.Equal(t, 1, env.metrics.value("cache_miss", "shop"))
+	assert.Equal(t, 1, env.metrics.value("db_fallback", "shop", "cache_miss"))
+	assert.Equal(t, 1, env.metrics.value("writeback_success", "shop", "value"))
 }
 
-func TestGetOrLoadWithLogicalExpire(t *testing.T) {
-	t.Run("cache miss sync load and write envelope", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		key := "shop:1"
-		shop := ShopFixture{ID: 1, Name: "real_shop"}
+func TestGetOrLoad_WriteBackWorkerBlocked_ReturnWithoutWaitingForRedis(t *testing.T) {
+	env := newCacheTestEnv(t, withTestPoolSize(1, 2))
+	blockerStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+	assert.True(t, env.client.runtime.refreshPool.Submit(refreshJob{run: func() {
+		close(blockerStarted)
+		<-releaseBlocker
+	}}))
+	<-blockerStarted
 
-		got, found, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, key, time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				return shop, true, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, shop, got)
+	actual, found, err := GetOrLoad(
+		context.Background(), env.client, "shop", "shop:async",
+		time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			return shopFixture{ID: 20, Name: "database"}, true, nil
+		},
+	)
 
-		val, err := mr.Get(key)
-		require.NoError(t, err)
-		var envelope RedisData
-		err = json.Unmarshal([]byte(val), &envelope)
-		require.NoError(t, err)
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, shopFixture{ID: 20, Name: "database"}, actual)
+	assert.False(t, env.redis.Exists("shop:async"))
+	close(releaseBlocker)
+	assert.Eventually(t, func() bool {
+		return env.redis.Exists("shop:async")
+	}, time.Second, 10*time.Millisecond)
+}
 
-		var cachedShop ShopFixture
-		err = json.Unmarshal(envelope.Data, &cachedShop)
-		require.NoError(t, err)
-		require.Equal(t, shop, cachedShop)
-		require.True(t, envelope.ExpireAt.After(time.Now()))
-	})
-	t.Run("fresh cache hit do not call loader", func(t *testing.T) {
-		client, _ := newTestCacheClient(t, nil)
-		key := "shop:2"
-		shop := ShopFixture{ID: 2, Name: "fresh_shop"}
+func TestGetOrLoad_CacheMissNotFound_ReturnZeroAndWriteBackNullAsync(t *testing.T) {
+	env := newCacheTestEnv(t)
 
-		err := SetWithLogicalExpire(client.rdb, context.Background(), key, shop, time.Minute)
-		require.NoError(t, err)
+	actual, found, err := GetOrLoad(
+		context.Background(), env.client, "shop", "shop:missing",
+		time.Minute, 20*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			return shopFixture{ID: 99, Name: "must be discarded"}, false, nil
+		},
+	)
 
-		got, found, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, key, time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				t.Fatal("loader must not be called for fresh cache")
-				return ShopFixture{}, false, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, shop, got)
-	})
-	t.Run("expired cache return old value and async refresh", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		key := "shop:3"
-		oldShop := ShopFixture{ID: 3, Name: "old_shop"}
-		newShop := ShopFixture{ID: 3, Name: "new_shop"}
+	assert.NoError(t, err)
+	assert.False(t, found)
+	assert.NotZero(t, actual)
+	assert.Eventually(t, func() bool {
+		cached, getErr := env.redis.Get("shop:missing")
+		return getErr == nil && cached == ""
+	}, time.Second, 10*time.Millisecond)
+	assert.Equal(t, 1, env.metrics.value("writeback_success", "shop", "null"))
+}
 
-		err := SetWithLogicalExpire(client.rdb, context.Background(), key, oldShop, -time.Minute)
-		require.NoError(t, err)
+func TestGetOrLoad_LoaderError_PropagateWithoutWriteBack(t *testing.T) {
+	env := newCacheTestEnv(t)
+	expectedErr := errors.New("database unavailable")
 
-		var wg sync.WaitGroup
-		wg.Add(1)
+	actual, found, err := GetOrLoad(
+		context.Background(), env.client, "shop", "shop:3",
+		time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			return shopFixture{}, false, expectedErr
+		},
+	)
 
-		got, found, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, key, time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				defer wg.Done()
-				return newShop, true, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, oldShop, got)
+	assert.ErrorIs(t, err, expectedErr)
+	assert.False(t, found)
+	assert.Zero(t, actual)
+	assert.False(t, env.redis.Exists("shop:3"))
+}
 
-		wg.Wait()
-		require.Eventually(t, func() bool {
-			val, err := mr.Get(key)
-			if err != nil {
-				return false
-			}
+func TestGetOrLoad_MarshalFailure_ReturnDatabaseValueAndRecordMetric(t *testing.T) {
+	type unsupportedFixture struct {
+		Name string
+		Ch   chan int
+	}
+	env := newCacheTestEnv(t)
+	expected := unsupportedFixture{Name: "database", Ch: make(chan int)}
 
-			var envelope RedisData
-			if err := json.Unmarshal([]byte(val), &envelope); err != nil {
-				return false
-			}
-			var cachedShop ShopFixture
-			_ = json.Unmarshal(envelope.Data, &cachedShop)
+	actual, found, err := GetOrLoad(
+		context.Background(), env.client, "unsupported", "unsupported:1",
+		time.Minute, 30*time.Second,
+		func(context.Context) (unsupportedFixture, bool, error) {
+			return expected, true, nil
+		},
+	)
 
-			return cachedShop == newShop
-		}, 1*time.Second, 10*time.Millisecond, "Redis Cache data was not updated in time")
-	})
-	t.Run("multiple requests read same expired key only one loader runs", func(t *testing.T) {
-		client, _ := newTestCacheClient(t, nil)
-		key := "shop:4"
-		oldShop := ShopFixture{ID: 4, Name: "old"}
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, expected, actual)
+	assert.False(t, env.redis.Exists("unsupported:1"))
+	assert.Equal(t, 1, env.metrics.value("writeback_error", "unsupported", "value", "marshal_error"))
+}
 
-		err := SetWithLogicalExpire(client.rdb, context.Background(), key, oldShop, -time.Minute)
-		require.NoError(t, err)
+func TestGetOrLoad_RedisReadFailure_FallbackToDatabase(t *testing.T) {
+	rdb, mock := redismock.NewClientMock()
+	expectedErr := errors.New("redis read failed")
+	mock.ExpectGet("shop:4").SetErr(expectedErr)
+	client, metrics := newCacheTestClient(t, rdb, withoutTestRefreshPool())
+	expected := shopFixture{ID: 4, Name: "database"}
 
-		var loaderCallCount atomic.Int32 //!!!
-		var loaderWg sync.WaitGroup
-		loaderWg.Add(1)
+	actual, found, err := GetOrLoad(
+		context.Background(), client, "shop", "shop:4",
+		time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			return expected, true, nil
+		},
+	)
 
-		loaderBlock := make(chan struct{})
-		loaderFunc := func(context.Context) (ShopFixture, bool, error) {
-			loaderWg.Done()
-			<-loaderBlock
-			loaderCallCount.Add(1)
-			return ShopFixture{ID: 4, Name: "new"}, true, nil
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, expected, actual)
+	assert.Equal(t, 1, metrics.value("redis_error", "shop", "get"))
+	assert.Equal(t, 1, metrics.value("db_fallback", "shop", "redis_error"))
+	assert.Equal(t, 1, metrics.value("writeback_dropped", "shop", "pool_unavailable"))
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetOrLoad_NullWriteBackFailure_DoesNotChangeDatabaseResult(t *testing.T) {
+	rdb, mock := redismock.NewClientMock()
+	mock.ExpectGet("shop:missing").RedisNil()
+	mock.ExpectSet("shop:missing", "", 30*time.Second).SetErr(errors.New("redis write failed"))
+	client, metrics := newCacheTestClient(t, rdb)
+
+	actual, found, err := GetOrLoad(
+		context.Background(), client, "shop", "shop:missing",
+		time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			return shopFixture{}, false, nil
+		},
+	)
+
+	assert.NoError(t, err)
+	assert.False(t, found)
+	assert.Zero(t, actual)
+	assert.Eventually(t, func() bool {
+		return metrics.value("writeback_error", "shop", "null", "redis_error") == 1
+	}, time.Second, 10*time.Millisecond)
+	assert.Equal(t, 1, metrics.value("redis_error", "shop", "set"))
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetOrLoad_CorruptedValue_ReloadAndRepairCache(t *testing.T) {
+	env := newCacheTestEnv(t)
+	env.redis.Set("shop:5", "{broken-json")
+	expected := shopFixture{ID: 5, Name: "reloaded"}
+
+	actual, found, err := GetOrLoad(
+		context.Background(), env.client, "shop", "shop:5",
+		time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			return expected, true, nil
+		},
+	)
+
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, expected, actual)
+	assert.Eventually(t, func() bool {
+		cached, getErr := env.redis.Get("shop:5")
+		if getErr != nil {
+			return false
 		}
+		var decoded shopFixture
+		return json.Unmarshal([]byte(cached), &decoded) == nil && decoded == expected
+	}, time.Second, 10*time.Millisecond)
+	assert.Equal(t, 1, env.metrics.value("cache_corrupted", "shop"))
+	assert.Equal(t, 1, env.metrics.value("db_fallback", "shop", "corrupted"))
+}
 
-		for i := 0; i < 5; i++ {
-			got, found, err := GetOrLoadWithLogicalExpire(context.Background(), client, key, time.Minute, time.Second, loaderFunc)
-			require.NoError(t, err)
-			require.True(t, found)
-			require.Equal(t, oldShop, got)
+func TestDeleteCorruptedAsync_ValueChangedBeforeDelete_PreserveNewValue(t *testing.T) {
+	env := newCacheTestEnv(t, withTestPoolSize(1, 4))
+	blockerStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+	assert.True(t, env.client.runtime.refreshPool.Submit(refreshJob{run: func() {
+		close(blockerStarted)
+		<-releaseBlocker
+	}}))
+	<-blockerStarted
+
+	env.redis.Set("shop:6", "{broken-json")
+	env.client.deleteCorruptedAsync("shop", "shop:6", "{broken-json")
+	env.redis.Set("shop:6", `{"id":6,"name":"newer"}`)
+	deleteFinished := make(chan struct{})
+	assert.True(t, env.client.runtime.refreshPool.Submit(refreshJob{run: func() {
+		close(deleteFinished)
+	}}))
+	close(releaseBlocker)
+	<-deleteFinished
+
+	cached, err := env.redis.Get("shop:6")
+	assert.NoError(t, err)
+	assert.Equal(t, `{"id":6,"name":"newer"}`, cached)
+}
+
+func TestGetOrLoad_ConcurrentSameKey_LoadOnceAndShareResult(t *testing.T) {
+	env := newCacheTestEnv(t)
+	const callers = 12
+	start := make(chan struct{})
+	loaderStarted := make(chan struct{})
+	releaseLoader := make(chan struct{})
+	var loaderCalls atomic.Int32
+
+	loader := func(context.Context) (shopFixture, bool, error) {
+		if loaderCalls.Add(1) == 1 {
+			close(loaderStarted)
 		}
+		<-releaseLoader
+		return shopFixture{ID: 7, Name: "shared"}, true, nil
+	}
 
-		close(loaderBlock)
-		loaderWg.Wait()
+	type result struct {
+		value shopFixture
+		found bool
+		err   error
+	}
+	results := make(chan result, callers)
+	var ready sync.WaitGroup
+	ready.Add(callers)
+	for range callers {
+		go func() {
+			ready.Done()
+			<-start
+			value, found, err := GetOrLoad(
+				context.Background(), env.client, "shop", "shop:7",
+				time.Minute, 30*time.Second, loader,
+			)
+			results <- result{value: value, found: found, err: err}
+		}()
+	}
+	ready.Wait()
+	close(start)
+	<-loaderStarted
+	assert.Eventually(t, func() bool {
+		return env.metrics.value("cache_miss", "shop") == callers
+	}, time.Second, 10*time.Millisecond)
+	close(releaseLoader)
 
-		require.Eventually(t, func() bool {
-			count := loaderCallCount.Load()
-			if count != int32(1) {
-				return false
-			}
-			return true
-		}, 1*time.Second, 20*time.Millisecond)
+	for range callers {
+		result := <-results
+		assert.NoError(t, result.err)
+		assert.True(t, result.found)
+		assert.Equal(t, shopFixture{ID: 7, Name: "shared"}, result.value)
+	}
+	assert.Equal(t, int32(1), loaderCalls.Load())
+	assert.GreaterOrEqual(t, env.metrics.value("singleflight_shared", "shop"), callers-1)
+}
+
+func TestGetOrLoad_ConcurrentDifferentKeys_RespectDatabaseConcurrencyLimit(t *testing.T) {
+	policy := defaultCacheTestConfig().policy
+	policy.MaxDBConcurrency = 2
+	policy.DBAcquireTimeout = 2 * time.Second
+	policy.LoaderTimeout = 3 * time.Second
+	env := newCacheTestEnv(t, withTestReadPolicy(policy))
+	const callers = 6
+	start := make(chan struct{})
+	releaseLoaders := make(chan struct{})
+	var active atomic.Int32
+	var maximum atomic.Int32
+	results := make(chan error, callers)
+
+	for i := range callers {
+		key := "shop:concurrent:" + string(rune('a'+i))
+		go func() {
+			<-start
+			_, _, err := GetOrLoad(
+				context.Background(), env.client, "shop", key,
+				time.Minute, 30*time.Second,
+				func(context.Context) (shopFixture, bool, error) {
+					current := active.Add(1)
+					updateAtomicMaximum(&maximum, current)
+					<-releaseLoaders
+					active.Add(-1)
+					return shopFixture{ID: 8}, true, nil
+				},
+			)
+			results <- err
+		}()
+	}
+	close(start)
+	assert.Eventually(t, func() bool { return active.Load() == 2 }, time.Second, 10*time.Millisecond)
+	close(releaseLoaders)
+
+	for range callers {
+		assert.NoError(t, <-results)
+	}
+	assert.Equal(t, int32(2), maximum.Load())
+}
+
+func TestGetOrLoad_DatabaseSemaphoreTimeout_ReturnOverloaded(t *testing.T) {
+	policy := defaultCacheTestConfig().policy
+	policy.MaxDBConcurrency = 1
+	policy.DBAcquireTimeout = 20 * time.Millisecond
+	env := newCacheTestEnv(t, withTestReadPolicy(policy))
+	env.client.runtime.dbSlots <- struct{}{}
+	t.Cleanup(func() { <-env.client.runtime.dbSlots })
+	var loaderCalled atomic.Bool
+
+	actual, found, err := GetOrLoad(
+		context.Background(), env.client, "shop", "shop:overloaded",
+		time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			loaderCalled.Store(true)
+			return shopFixture{}, false, nil
+		},
+	)
+
+	assert.ErrorIs(t, err, ErrDBFallbackOverloaded)
+	assert.False(t, found)
+	assert.Zero(t, actual)
+	assert.False(t, loaderCalled.Load())
+	assert.Equal(t, 1, env.metrics.value("db_fallback_rejected", "semaphore_timeout"))
+}
+
+func TestGetOrLoad_CanceledRequest_IgnoreBreakerResult(t *testing.T) {
+	env := newCacheTestEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	actual, found, err := GetOrLoad(
+		ctx, env.client, "shop", "shop:canceled",
+		time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			t.Fatal("loader must not run after request cancellation")
+			return shopFixture{}, false, nil
+		},
+	)
+
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.False(t, found)
+	assert.Zero(t, actual)
+	assert.Equal(t, uint64(0), env.client.runtime.breaker.total)
+	assert.Equal(t, uint64(0), env.client.runtime.breaker.failures)
+}
+
+func TestGetOrLoad_BreakerOpen_BypassRedisAndUseProtectedLoader(t *testing.T) {
+	rdb, mock := redismock.NewClientMock()
+	breaker := NewRedisBreaker(BreakerConfig{
+		Window:          time.Minute,
+		MinimumRequests: 1,
+		FailureRatio:    1,
+		OpenDuration:    time.Minute,
 	})
-	t.Run("refresh lock already exists do not start loader", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		key := "shop:5"
-		oldShop := ShopFixture{ID: 5, Name: "old"}
+	permit, allowed := breaker.Allow()
+	assert.True(t, allowed)
+	permit.Done(false)
+	client, metrics := newCacheTestClient(t, rdb, withoutTestRefreshPool(), withTestBreaker(breaker))
 
-		err := SetWithLogicalExpire(client.rdb, context.Background(), key, oldShop, -time.Minute)
-		require.NoError(t, err)
+	actual, found, err := GetOrLoad(
+		context.Background(), client, "shop", "shop:bypass",
+		time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			return shopFixture{ID: 9, Name: "database"}, true, nil
+		},
+	)
 
-		mr.Set("mutex:"+key, "someone_already_lock")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, shopFixture{ID: 9, Name: "database"}, actual)
+	assert.Equal(t, 1, metrics.value("redis_bypass", "shop", "breaker_open"))
+	assert.Equal(t, 1, metrics.value("db_fallback", "shop", "breaker_open"))
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
 
-		got, found, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, key, time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				t.Fatal("loader should not be called when lock already exists")
-				return ShopFixture{}, false, nil
-			},
+func TestGetOrLoad_NullMarkerExpired_LoadAgain(t *testing.T) {
+	env := newCacheTestEnv(t)
+	const nullTTL = 10 * time.Second
+	var loaderCalls atomic.Int32
+	loader := func(context.Context) (shopFixture, bool, error) {
+		loaderCalls.Add(1)
+		return shopFixture{}, false, nil
+	}
+
+	_, found, err := GetOrLoad(
+		context.Background(), env.client, "shop", "shop:expired-null",
+		time.Minute, nullTTL, loader,
+	)
+	assert.NoError(t, err)
+	assert.False(t, found)
+	assert.Eventually(t, func() bool {
+		return env.redis.Exists("shop:expired-null")
+	}, time.Second, 10*time.Millisecond)
+
+	env.redis.FastForward(nullTTL + time.Second)
+	_, found, err = GetOrLoad(
+		context.Background(), env.client, "shop", "shop:expired-null",
+		time.Minute, nullTTL, loader,
+	)
+	assert.NoError(t, err)
+	assert.False(t, found)
+	assert.Equal(t, int32(2), loaderCalls.Load())
+}
+
+func TestGetOrLoadWithMutex_CacheHit_ReturnCachedValue(t *testing.T) {
+	env := newCacheTestEnv(t)
+	expected := shopFixture{ID: 10, Name: "cached"}
+	encoded, err := json.Marshal(expected)
+	assert.NoError(t, err)
+	env.redis.Set("shop:10", string(encoded))
+
+	actual, found, err := GetOrLoadWithMutex(
+		context.Background(), env.client, "shop:10", time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			t.Fatal("loader must not be called on a cache hit")
+			return shopFixture{}, false, nil
+		},
+	)
+
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, expected, actual)
+}
+
+func TestGetOrLoadWithLogicalExpire_ExpiredValue_ReturnStaleAndRefreshAsync(t *testing.T) {
+	env := newCacheTestEnv(t)
+	stale := shopFixture{ID: 11, Name: "stale"}
+	fresh := shopFixture{ID: 11, Name: "fresh"}
+	assert.NoError(t, SetWithLogicalExpire(env.client.rdb, context.Background(), "shop:11", stale, -time.Second))
+
+	actual, found, err := GetOrLoadWithLogicalExpire(
+		context.Background(), env.client, "shop:11", time.Minute, 30*time.Second,
+		func(context.Context) (shopFixture, bool, error) {
+			return fresh, true, nil
+		},
+	)
+
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, stale, actual)
+	assert.Eventually(t, func() bool {
+		value, valueFound, hit, expired, readErr := readLogicalCache[shopFixture](
+			context.Background(), env.client, "shop:11",
 		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, oldShop, got)
+		return readErr == nil && hit && valueFound && !expired && value == fresh
+	}, time.Second, 10*time.Millisecond)
+}
+
+type cacheTestEnv struct {
+	client  *CacheClient
+	redis   *miniredis.Miniredis
+	metrics *recordingMetrics
+}
+
+type cacheTestConfig struct {
+	createPool bool
+	workers    int
+	queueSize  int
+	policy     ReadPolicy
+	breaker    *RedisBreaker
+}
+
+type cacheTestOption func(*cacheTestConfig)
+
+func newCacheTestEnv(t *testing.T, options ...cacheTestOption) *cacheTestEnv {
+	t.Helper()
+	miniRedis := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{
+		Addr:         miniRedis.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
+		MaxRetries:   0,
 	})
-	t.Run("loader error retain old value and release lock", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		key := "shop:6"
-		oldShop := ShopFixture{ID: 6, Name: "old"}
+	t.Cleanup(func() { assert.NoError(t, rdb.Close()) })
+	client, metrics := newCacheTestClient(t, rdb, options...)
+	return &cacheTestEnv{client: client, redis: miniRedis, metrics: metrics}
+}
 
-		err := SetWithLogicalExpire(client.rdb, context.Background(), key, oldShop, -time.Minute)
-		require.NoError(t, err)
+func newCacheTestClient(
+	t *testing.T,
+	rdb redis.Cmdable,
+	options ...cacheTestOption,
+) (*CacheClient, *recordingMetrics) {
+	t.Helper()
+	config := defaultCacheTestConfig()
+	for _, option := range options {
+		option(&config)
+	}
 
-		var wg sync.WaitGroup
-		wg.Add(1)
+	metrics := newRecordingMetrics()
+	var pool *RefreshPool
+	if config.createPool {
+		pool = NewRefreshPool(rdb, config.workers, config.queueSize, 0)
+		t.Cleanup(pool.Shutdown)
+	}
+	if config.breaker == nil {
+		config.breaker = NewRedisBreaker(BreakerConfig{
+			Window:          time.Minute,
+			MinimumRequests: 100,
+			FailureRatio:    0.5,
+			OpenDuration:    time.Second,
+		})
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	runtime := NewReadRuntime(pool, config.breaker, logger, metrics, config.policy)
+	return NewCacheClient(rdb, pool, runtime), metrics
+}
 
-		got, found, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, key, time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				defer wg.Done()
-				return ShopFixture{}, false, errors.New("db error")
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, oldShop, got)
+func defaultCacheTestConfig() cacheTestConfig {
+	return cacheTestConfig{
+		createPool: true,
+		workers:    2,
+		queueSize:  32,
+		policy: ReadPolicy{
+			RedisReadTimeout:  100 * time.Millisecond,
+			RedisWriteTimeout: 200 * time.Millisecond,
+			LoaderTimeout:     2 * time.Second,
+			DBAcquireTimeout:  300 * time.Millisecond,
+			MaxDBConcurrency:  20,
+		},
+	}
+}
 
-		wg.Wait()
-		time.Sleep(10 * time.Millisecond)
+func withoutTestRefreshPool() cacheTestOption {
+	return func(config *cacheTestConfig) {
+		config.createPool = false
+	}
+}
 
-		require.False(t, mr.Exists("mutex:"+key))
+func withTestPoolSize(workers, queueSize int) cacheTestOption {
+	return func(config *cacheTestConfig) {
+		config.createPool = true
+		config.workers = workers
+		config.queueSize = queueSize
+	}
+}
 
-		val, err := mr.Get(key)
-		require.NoError(t, err)
-		var envelope RedisData
-		_ = json.Unmarshal([]byte(val), &envelope)
-		var cachedShop ShopFixture
-		_ = json.Unmarshal(envelope.Data, &cachedShop)
-		require.Equal(t, oldShop, cachedShop)
-	})
-	t.Run("loader returns found false write null cache", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		key := "shop:7"
-		oldShop := ShopFixture{ID: 7, Name: "old"}
+func withTestReadPolicy(policy ReadPolicy) cacheTestOption {
+	return func(config *cacheTestConfig) {
+		config.policy = policy
+	}
+}
 
-		err := SetWithLogicalExpire(client.rdb, context.Background(), key, oldShop, -time.Minute)
-		require.NoError(t, err)
+func withTestBreaker(breaker *RedisBreaker) cacheTestOption {
+	return func(config *cacheTestConfig) {
+		config.breaker = breaker
+	}
+}
 
-		var wg sync.WaitGroup
-		wg.Add(1)
+type recordingMetrics struct {
+	mu       sync.Mutex
+	counters map[string]int
+}
 
-		got, found, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, key, time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				defer wg.Done()
-				return ShopFixture{}, false, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, oldShop, got)
+func newRecordingMetrics() *recordingMetrics {
+	return &recordingMetrics{counters: make(map[string]int)}
+}
 
-		wg.Wait()
-		time.Sleep(10 * time.Millisecond)
-		val, err := mr.Get(key)
-		require.NoError(t, err)
-		require.Equal(t, "", val)
-	})
-	t.Run("envelope corrupted delete and sync load", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		key := "shop:8"
-		shop := ShopFixture{ID: 8, Name: "sync_load_shop"}
+func (m *recordingMetrics) increment(parts ...string) {
+	m.mu.Lock()
+	m.counters[metricKey(parts...)]++
+	m.mu.Unlock()
+}
 
-		mr.Set(key, "{invalid_json")
+func (m *recordingMetrics) value(parts ...string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.counters[metricKey(parts...)]
+}
 
-		got, found, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, key, time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				return shop, true, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, shop, got)
-	})
-	t.Run("internal Data corrupted delete and sync load", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		key := "shop:8_2"
-		shop := ShopFixture{ID: 82, Name: "sync_load_shop"}
+func (m *recordingMetrics) IncCacheHit(cacheName string) {
+	m.increment("cache_hit", cacheName)
+}
 
-		badEnvelope := RedisData{
-			Data:     json.RawMessage(`"corrupted_internal_string"`),
-			ExpireAt: time.Now().Add(time.Minute),
+func (m *recordingMetrics) IncCacheMiss(cacheName string) {
+	m.increment("cache_miss", cacheName)
+}
+
+func (m *recordingMetrics) IncCacheCorrupted(cacheName string) {
+	m.increment("cache_corrupted", cacheName)
+}
+
+func (m *recordingMetrics) IncRedisError(cacheName, operation string) {
+	m.increment("redis_error", cacheName, operation)
+}
+
+func (m *recordingMetrics) IncRedisBypass(cacheName, reason string) {
+	m.increment("redis_bypass", cacheName, reason)
+}
+
+func (m *recordingMetrics) IncSingleflightShared(cacheName string) {
+	m.increment("singleflight_shared", cacheName)
+}
+
+func (m *recordingMetrics) IncDBFallback(cacheName, reason string) {
+	m.increment("db_fallback", cacheName, reason)
+}
+
+func (m *recordingMetrics) IncDBFallbackRejected(reason string) {
+	m.increment("db_fallback_rejected", reason)
+}
+
+func (m *recordingMetrics) ObserveDBFallbackDuration(cacheName string, _ time.Duration) {
+	m.increment("db_fallback_duration", cacheName)
+}
+
+func (m *recordingMetrics) IncWritebackSuccess(cacheName, kind string) {
+	m.increment("writeback_success", cacheName, kind)
+}
+
+func (m *recordingMetrics) IncWritebackError(cacheName, kind, reason string) {
+	m.increment("writeback_error", cacheName, kind, reason)
+}
+
+func (m *recordingMetrics) IncWritebackDropped(cacheName, reason string) {
+	m.increment("writeback_dropped", cacheName, reason)
+}
+
+func metricKey(parts ...string) string {
+	var key string
+	for _, part := range parts {
+		key += "\x00" + part
+	}
+	return key
+}
+
+func updateAtomicMaximum(maximum *atomic.Int32, candidate int32) {
+	for {
+		current := maximum.Load()
+		if candidate <= current || maximum.CompareAndSwap(current, candidate) {
+			return
 		}
-		bytes, _ := json.Marshal(badEnvelope)
-		mr.Set(key, string(bytes))
-
-		got, found, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, key, time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				return shop, true, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, shop, got)
-	})
-	t.Run("redis read error returns error", func(t *testing.T) {
-		badRdb := redis.NewClient(&redis.Options{Addr: "localhost:12345"})
-		defer badRdb.Close()
-		client := NewCacheClient(badRdb, nil)
-
-		_, _, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, "shop:9", time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				return ShopFixture{}, false, nil
-			},
-		)
-		require.Error(t, err)
-	})
-	t.Run("refresh pool full release acquired lock", func(t *testing.T) {
-		client, mr := newTestCacheClient(t, nil)
-		pool := NewRefreshPool(client.rdb, 1, 1, 0)
-		defer pool.Shutdown()
-		client.refreshPool = pool
-
-		// 1. 提交一个持久阻塞的 Job，占满 worker 和 channel 队列
-		blockChan := make(chan struct{})
-		pool.Submit(refreshJob{run: func() {
-			<-blockChan
-		}})
-		// 再次提交一个 Job 以填满缓冲队列 (现在的 jobs channel 已满)
-		pool.Submit(refreshJob{run: func() {}})
-
-		// 2. 构造一个用于测试过期调度的 Key
-		key := "shop:10"
-		oldShop := ShopFixture{ID: 10, Name: "old"}
-		err := SetWithLogicalExpire(client.rdb, context.Background(), key, oldShop, -time.Minute)
-		require.NoError(t, err)
-
-		// 3. 调用方法。此时由于缓存已逻辑过期，它会抢占 mutex 并尝试将其提交给已满的 Pool。
-		// 预期：Submit 返回 false，触发立刻释放锁的分支。
-		got, found, err := GetOrLoadWithLogicalExpire(
-			context.Background(), client, key, time.Minute, time.Second,
-			func(context.Context) (ShopFixture, bool, error) {
-				return ShopFixture{ID: 10, Name: "never_reached"}, true, nil
-			},
-		)
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Equal(t, oldShop, got)
-
-		// 释放阻塞通道，让 pool 恢复
-		close(blockChan)
-
-		// 确认抢占到临时的互斥锁已经从 Redis 中释放
-		time.Sleep(20 * time.Millisecond)
-		require.False(t, mr.Exists("mutex:"+key))
-	})
+	}
 }

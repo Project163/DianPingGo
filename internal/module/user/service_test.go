@@ -10,6 +10,7 @@ import (
 	"dianping/pkg/errmsg"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redismock/v9"
 	"github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
@@ -66,7 +67,7 @@ func setUpUserService(t *testing.T) (*Service, *mockUserRepo, *miniredis.Minired
 		require.NoError(t, rdb.Close())
 	})
 	repo := newMockUserRepo()
-	return NewService(repo, rdb, nil), repo, mr
+	return NewService(repo, rdb, newModuleTestCacheClient(t, rdb)), repo, mr
 }
 
 func TestService_Login(t *testing.T) {
@@ -496,11 +497,11 @@ func TestService_GetUserByID(t *testing.T) {
 
 		// 验证结果已被回写缓存
 		cacheKey := CacheUserKey + strconv.FormatUint(1001, 10)
-		cached, _ := mr.Get(cacheKey)
+		cached := waitForModuleCacheValue(t, mr, cacheKey)
 		require.NotEmpty(t, cached)
 	})
 
-	t.Run("cache miss with no DB record returns zero-value DTO", func(t *testing.T) {
+	t.Run("cache miss with no DB record returns ErrUserNotFound", func(t *testing.T) {
 		service, repo, mr := setUpUserService(t)
 		ctx := context.Background()
 
@@ -514,8 +515,7 @@ func TestService_GetUserByID(t *testing.T) {
 		require.Nil(t, dto)
 
 		cacheKey := CacheUserKey + strconv.FormatUint(9999, 10)
-		cached, err := mr.Get(cacheKey)
-		require.NoError(t, err)
+		cached := waitForModuleCacheValue(t, mr, cacheKey)
 		require.Equal(t, "", cached)
 	})
 
@@ -534,6 +534,26 @@ func TestService_GetUserByID(t *testing.T) {
 		require.ErrorIs(t, err, &errmsg.ErrUserNotFound)
 		require.Nil(t, dto)
 	})
+}
+
+func TestService_GetUserByID_RedisUnavailable_FallbackToRepository(t *testing.T) {
+	rdb, redisMock := redismock.NewClientMock()
+	userID := uint64(1002)
+	redisMock.ExpectGet(CacheUserKey + strconv.FormatUint(userID, 10)).SetErr(errors.New("redis unavailable"))
+	repo := newMockUserRepo()
+	repo.getUserByIDFunc = func(ctx context.Context, actualUserID uint64) (*User, error) {
+		require.Equal(t, userID, actualUserID)
+		return &User{ID: userID, NickName: "Database User", Icon: "/db.png"}, nil
+	}
+	service := NewService(repo, rdb, newModuleTestCacheClientWithoutPool(t, rdb))
+
+	result, err := service.GetUserByID(context.Background(), userID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, userID, result.ID)
+	require.Equal(t, "Database User", result.NickName)
+	require.NoError(t, redisMock.ExpectationsWereMet())
 }
 
 func TestService_ListUsersByIDs(t *testing.T) {

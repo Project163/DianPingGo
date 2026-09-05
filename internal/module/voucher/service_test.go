@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"dianping/internal/cache"
 	"dianping/internal/module/seckillvoucher"
 	"dianping/pkg/errmsg"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -68,7 +68,7 @@ func setUpVoucherService(t *testing.T) (*Service, *mockVoucherRepo, *miniredis.M
 	})
 
 	repo := newMockVoucherRepo()
-	svc := NewService(repo, rdb, nil)
+	svc := NewService(repo, rdb, newModuleTestCacheClient(t, rdb))
 	return svc, repo, mr
 }
 
@@ -207,7 +207,7 @@ func TestService_GetVoucherByID(t *testing.T) {
 
 		// Verify result was cached
 		cacheKey := fmt.Sprintf("%s%d", CacheVoucherKey, 100)
-		cached, _ := mr.Get(cacheKey)
+		cached := waitForModuleCacheValue(t, mr, cacheKey)
 		require.NotEmpty(t, cached)
 	})
 
@@ -245,7 +245,7 @@ func TestService_GetVoucherByID(t *testing.T) {
 	})
 
 	t.Run("DB returns nil record writes null marker and returns nil", func(t *testing.T) {
-		svc, repo, _ := setUpVoucherService(t)
+		svc, repo, mr := setUpVoucherService(t)
 		ctx := context.Background()
 
 		loadCount := 0
@@ -260,6 +260,7 @@ func TestService_GetVoucherByID(t *testing.T) {
 		first, err := svc.GetVoucherByID(ctx, 999)
 		require.ErrorIs(t, err, &errmsg.ErrVoucherNotFound)
 		require.Nil(t, first)
+		waitForModuleCacheValue(t, mr, fmt.Sprintf("%s%d", CacheVoucherKey, 999))
 
 		second, err := svc.GetVoucherByID(ctx, 999)
 		require.ErrorIs(t, err, &errmsg.ErrVoucherNotFound)
@@ -281,6 +282,26 @@ func TestService_GetVoucherByID(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, resp)
 	})
+}
+
+func TestService_GetVoucherByID_RedisUnavailable_FallbackToRepository(t *testing.T) {
+	rdb, redisMock := redismock.NewClientMock()
+	voucherID := uint64(301)
+	redisMock.ExpectGet(fmt.Sprintf("%s%d", CacheVoucherKey, voucherID)).SetErr(errors.New("redis unavailable"))
+	repo := newMockVoucherRepo()
+	repo.getVoucherByIDFunc = func(ctx context.Context, actualID uint64) (*Voucher, error) {
+		require.Equal(t, voucherID, actualID)
+		return &Voucher{ID: voucherID, ShopID: 3, Title: "Database Voucher"}, nil
+	}
+	svc := NewService(repo, rdb, newModuleTestCacheClientWithoutPool(t, rdb))
+
+	result, err := svc.GetVoucherByID(context.Background(), voucherID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, voucherID, result.ID)
+	require.Equal(t, "Database Voucher", result.Title)
+	require.NoError(t, redisMock.ExpectationsWereMet())
 }
 
 // =============================================================================
@@ -310,7 +331,7 @@ func TestService_GetVoucherByShopID(t *testing.T) {
 
 		// Verify result was cached
 		cacheKey := fmt.Sprintf("%s%d", CacheShopVoucherKey, 1)
-		cached, _ := mr.Get(cacheKey)
+		cached := waitForModuleCacheValue(t, mr, cacheKey)
 		require.NotEmpty(t, cached)
 	})
 
@@ -353,8 +374,7 @@ func TestService_GetVoucherByShopID(t *testing.T) {
 			return nil, dbErr
 		}
 
-		// The cache QueryWithPassThrough returns the db error directly
-		// when the dbFunc returns an error (not ErrDataNotFound)
+		// Repository errors are propagated by the protected fallback loader.
 		resps, err := svc.GetVoucherByShopID(ctx, 1)
 		require.Error(t, err)
 		require.Nil(t, resps)
@@ -379,8 +399,7 @@ func TestService_GetVoucherByShopID(t *testing.T) {
 		require.Empty(t, result)
 
 		cacheKey := fmt.Sprintf("%s%d", CacheShopVoucherKey, 100)
-		cached, cacheErr := mr.Get(cacheKey)
-		require.NoError(t, cacheErr)
+		cached := waitForModuleCacheValue(t, mr, cacheKey)
 		require.JSONEq(t, `[]`, cached)
 
 		// 第二次从缓存读取。
@@ -390,6 +409,25 @@ func TestService_GetVoucherByShopID(t *testing.T) {
 		require.Empty(t, result)
 		require.Equal(t, 1, loadCount)
 	})
+}
+
+func TestService_GetVoucherByShopID_RedisUnavailable_FallbackToRepository(t *testing.T) {
+	rdb, redisMock := redismock.NewClientMock()
+	shopID := uint64(4)
+	redisMock.ExpectGet(fmt.Sprintf("%s%d", CacheShopVoucherKey, shopID)).SetErr(errors.New("redis unavailable"))
+	repo := newMockVoucherRepo()
+	repo.getByShopIDFunc = func(ctx context.Context, actualShopID uint64) ([]Voucher, error) {
+		require.Equal(t, shopID, actualShopID)
+		return []Voucher{{ID: 401, ShopID: shopID, Title: "Database Voucher"}}, nil
+	}
+	svc := NewService(repo, rdb, newModuleTestCacheClientWithoutPool(t, rdb))
+
+	result, err := svc.GetVoucherByShopID(context.Background(), shopID)
+
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	require.Equal(t, uint64(401), result[0].ID)
+	require.NoError(t, redisMock.ExpectationsWereMet())
 }
 
 // =============================================================================
@@ -427,9 +465,6 @@ func TestService_toVoucherRespList(t *testing.T) {
 
 // Ensure the mock satisfies the VoucherRepository interface
 var _ VoucherRepository = (*mockVoucherRepo)(nil)
-
-// Ensure cache.ErrDataNotFound is importable
-var _ = cache.ErrDataNotFound
 
 // Ensure errmsg is importable
 var _ = errmsg.ErrInternalSec

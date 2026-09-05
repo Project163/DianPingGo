@@ -25,10 +25,10 @@ type Service struct {
 	rdb         redis.Cmdable
 }
 
-func NewService(repo VoucherRepository, rdb redis.Cmdable, pool *cache.RefreshPool) *Service {
+func NewService(repo VoucherRepository, rdb redis.Cmdable, cacheClient *cache.CacheClient) *Service {
 	return &Service{
 		repo:        repo,
-		cacheClient: cache.NewCacheClient(rdb, pool),
+		cacheClient: cacheClient,
 		rdb:         rdb,
 	}
 }
@@ -68,7 +68,7 @@ func (s *Service) GetVoucherByShopID(ctx context.Context, shopID uint64) ([]Vouc
 
 	// 使用缓存控制策略查询优惠券列表
 	vouchers, _, err := cache.GetOrLoad(
-		ctx, s.cacheClient, key, CacheShopVoucherTTL, CacheNullTTL,
+		ctx, s.cacheClient, "voucher_by_shop_id", key, CacheShopVoucherTTL, CacheNullTTL,
 		func(ctx context.Context) ([]Voucher, bool, error) {
 			result, err := s.repo.GetByShopID(ctx, shopID)
 			if err != nil {
@@ -90,7 +90,7 @@ func (s *Service) GetVoucherByID(ctx context.Context, id uint64) (*VoucherResp, 
 	key := fmt.Sprintf("%s%d", CacheVoucherKey, id)
 	// 使用缓存控制策略查询优惠券
 	voucher, found, err := cache.GetOrLoad(
-		ctx, s.cacheClient, key, CacheVoucherTTL, CacheNullTTL,
+		ctx, s.cacheClient, "voucher_by_id", key, CacheVoucherTTL, CacheNullTTL,
 		func(ctx context.Context) (Voucher, bool, error) {
 			result, err := s.repo.GetVoucherByID(ctx, id)
 			if err != nil {

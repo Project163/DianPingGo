@@ -35,11 +35,11 @@ type Service struct {
 	rdb         redis.Cmdable
 }
 
-func NewService(repo UserRepository, rdb redis.Cmdable, pool *cache.RefreshPool) *Service {
+func NewService(repo UserRepository, rdb redis.Cmdable, cacheClient *cache.CacheClient) *Service {
 	return &Service{
 		repo: repo,
 		// jwtSecret: []byte(secret),
-		cacheClient: cache.NewCacheClient(rdb, pool),
+		cacheClient: cacheClient,
 		rdb:         rdb,
 	}
 }
@@ -291,7 +291,7 @@ func (s *Service) GetUserByID(ctx context.Context, userID uint64) (*UserDTO, err
 	key := CacheUserKey + strconv.FormatUint(userID, 10)
 	var user User
 	user, found, err := cache.GetOrLoad(
-		ctx, s.cacheClient, key, CacheUserTTL, CacheNullTTL,
+		ctx, s.cacheClient, "user_by_id", key, CacheUserTTL, CacheNullTTL,
 		func(ctx context.Context) (User, bool, error) {
 			result, err := s.repo.GetUserByID(ctx, userID)
 			if err != nil {

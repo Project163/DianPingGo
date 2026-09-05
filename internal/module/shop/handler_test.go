@@ -81,7 +81,7 @@ func setUpShopHandler(t *testing.T) (*gin.Engine, *mockShopRepo, *miniredis.Mini
 	})
 
 	repo := new(mockShopRepo)
-	svc := NewService(repo, rdb, nil)
+	svc := NewService(repo, newModuleTestCacheClient(t, rdb))
 	handler := NewHandler(svc)
 
 	r := gin.New()

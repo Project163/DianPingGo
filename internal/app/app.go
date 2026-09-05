@@ -21,6 +21,7 @@ import (
 	"dianping/pkg/validator"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -64,26 +65,61 @@ func NewApp(configPath string) (*App, error) {
 func (a *App) Start() error {
 	validator.InitValidator()
 	txManager := tx.NewGormManager(a.db)
-	refreshPool := cache.NewRefreshPool(a.rdb, 10, 20, 0.2)
+	refreshPool := cache.NewRefreshPool(
+		a.rdb,
+		10,  // workers
+		100, // queue size，当前 20 可能偏小
+		0.2,
+	)
+
+	metrics := cache.NoopMetrics{} // Prometheus/OTel 实现
+	logger := slog.Default()
+
+	breaker := cache.NewRedisBreaker(cache.BreakerConfig{
+		Window:          10 * time.Second,
+		MinimumRequests: 20,
+		FailureRatio:    0.5,
+		OpenDuration:    3 * time.Second,
+	})
+
+	readRuntime := cache.NewReadRuntime(
+		refreshPool,
+		breaker,
+		logger,
+		metrics,
+		cache.ReadPolicy{
+			RedisReadTimeout:  100 * time.Millisecond,
+			RedisWriteTimeout: 200 * time.Millisecond,
+			LoaderTimeout:     2 * time.Second,
+			DBAcquireTimeout:  300 * time.Millisecond,
+			MaxDBConcurrency:  20,
+		},
+	)
+
+	cacheClient := cache.NewCacheClient(
+		a.rdb,
+		refreshPool,
+		readRuntime,
+	)
 
 	userInfoRepo := userinfo.NewRepository(a.db)
 	userInfoSrv := userinfo.NewService(userInfoRepo)
 
 	userRepo := user.NewRepository(a.db)
-	userSrv := user.NewService(userRepo, a.rdb, refreshPool)
+	userSrv := user.NewService(userRepo, a.rdb, cacheClient)
 	userHandler := user.NewHandler(userSrv, userInfoSrv)
 
 	shopRepo := shop.NewRepository(a.db)
-	shopSrv := shop.NewService(shopRepo, a.rdb, refreshPool)
+	shopSrv := shop.NewService(shopRepo, cacheClient)
 	shopHandler := shop.NewHandler(shopSrv)
 
 	shopTypeRepo := shoptype.NewRepository(a.db)
-	shopTypeSrv := shoptype.NewService(shopTypeRepo, a.rdb, refreshPool)
+	shopTypeSrv := shoptype.NewService(shopTypeRepo, cacheClient)
 	shopTypeHandler := shoptype.NewHandler(shopTypeSrv)
 
 	voucherRepo := voucher.NewRepository(a.db)
 	seckillVoucherRepo := seckillvoucher.NewRepository(a.db)
-	voucherSrv := voucher.NewService(voucherRepo, a.rdb, refreshPool)
+	voucherSrv := voucher.NewService(voucherRepo, a.rdb, cacheClient)
 	voucherHandler := voucher.NewHandler(voucherSrv)
 
 	voucherOrderRepo := voucherorder.NewRepository(a.db)

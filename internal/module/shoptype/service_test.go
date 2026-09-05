@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -56,7 +57,7 @@ func setUpShopTypeService(t *testing.T) (*Service, *mockShopTypeSvcRepo, *minire
 		require.NoError(t, rdb.Close())
 	})
 	repo := new(mockShopTypeSvcRepo)
-	return NewService(repo, rdb, nil), repo, mr
+	return NewService(repo, newModuleTestCacheClient(t, rdb)), repo, mr
 }
 
 // =============================================================================
@@ -225,7 +226,7 @@ func TestService_GetShopTypeAll(t *testing.T) {
 		require.Equal(t, "KTV", got[1].Name)
 
 		// Verify result was written to cache
-		cached, _ := mr.Get(BizShopTypeKey)
+		cached := waitForModuleCacheValue(t, mr, BizShopTypeKey)
 		require.NotEmpty(t, cached)
 	})
 
@@ -246,8 +247,7 @@ func TestService_GetShopTypeAll(t *testing.T) {
 		require.Empty(t, got)
 
 		cacheKey := BizShopTypeKey
-		cached, cacheErr := mr.Get(cacheKey)
-		require.NoError(t, cacheErr)
+		cached := waitForModuleCacheValue(t, mr, cacheKey)
 		require.JSONEq(t, `[]`, cached)
 
 		got, err = svc.GetShopTypeAll(ctx)
@@ -289,50 +289,40 @@ func TestService_GetShopTypeAll(t *testing.T) {
 		require.Empty(t, got)
 	})
 
-	t.Run("get all shop types with cache error from Redis returns error", func(t *testing.T) {
+	t.Run("corrupted cache reloads from repository", func(t *testing.T) {
 		svc, repo, mr := setUpShopTypeService(t)
 		ctx := context.Background()
 
-		// Set an unparseable value to simulate cache error
+		// Corrupted cache data is discarded and the repository remains the source of truth.
 		mr.Set(BizShopTypeKey, `not-valid-json`)
 
 		repo.getShopTypeAllFunc = func(ctx context.Context) ([]ShopType, error) {
 			return []ShopType{}, nil
 		}
 
-		// QueryWithPassThrough will fail at json.Unmarshal of the cache value
 		got, err := svc.GetShopTypeAll(ctx)
 		require.NoError(t, err)
 		require.Empty(t, got)
 	})
 }
 
-// =============================================================================
-// Default behavior tests
-// =============================================================================
+func TestService_GetShopTypeAll_RedisUnavailable_FallbackToRepository(t *testing.T) {
+	rdb, redisMock := redismock.NewClientMock()
+	redisMock.ExpectGet(BizShopTypeKey).SetErr(errors.New("redis unavailable"))
+	repo := new(mockShopTypeSvcRepo)
+	repo.getShopTypeAllFunc = func(context.Context) ([]ShopType, error) {
+		return []ShopType{{ID: 1, Name: "美食", Sort: 1}}, nil
+	}
+	svc := NewService(repo, newModuleTestCacheClientWithoutPool(t, rdb))
 
-func TestService_GetShopTypeAll_DefaultRepo(t *testing.T) {
-	t.Run("cache miss with ErrDataNotFound returns empty list", func(t *testing.T) {
-		svc, repo, _ := setUpShopTypeService(t)
-		ctx := context.Background()
+	result, err := svc.GetShopTypeAll(context.Background())
 
-		// Returning nil from dbFunc causes QueryWithPassThrough to return cache.ErrDataNotFound
-		repo.getShopTypeAllFunc = func(ctx context.Context) ([]ShopType, error) {
-			return nil, nil
-		}
-
-		// Service wraps ErrDataNotFound → empty slice
-		got, err := svc.GetShopTypeAll(ctx)
-		require.NoError(t, err)
-		require.Empty(t, got)
-		require.IsType(t, []ShopType{}, got)
-	})
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	require.Equal(t, "美食", result[0].Name)
+	require.NoError(t, redisMock.ExpectationsWereMet())
 }
 
-// Ensure cache.ErrDataNotFound is used correctly for nil returns
-// This test verifies known behavior: when GetShopTypeAll's dbFunc returns (nil, nil),
-// QueryWithPassThrough will cache "" as null marker and return ErrDataNotFound.
-// The service wraps this to return empty slice + nil error.
 func TestService_GetShopTypeAll_NullResult(t *testing.T) {
 	t.Run("nil result from repo returns empty slice", func(t *testing.T) {
 		svc, repo, mr := setUpShopTypeService(t)
@@ -348,11 +338,11 @@ func TestService_GetShopTypeAll_NullResult(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, got)
 
-		// Verify null value was cached (preventing subsequent DB calls)
-		nullVal, _ := mr.Get(BizShopTypeKey)
-		require.Equal(t, "[]", nullVal) // empty string = null marker
+		// nil repository results are normalized to an empty, found list.
+		cached := waitForModuleCacheValue(t, mr, BizShopTypeKey)
+		require.JSONEq(t, `[]`, cached)
 
-		// Second call should hit cache (no DB call, but ErrDataNotFound from cache)
+		// Second call should hit the cached empty list without querying the DB.
 		got2, err2 := svc.GetShopTypeAll(ctx)
 		require.NoError(t, err2)
 		require.Empty(t, got2)
