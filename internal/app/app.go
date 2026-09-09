@@ -5,6 +5,7 @@ import (
 	"dianping/internal/cache"
 	"dianping/internal/config"
 	"dianping/internal/infra"
+	"dianping/internal/middleware"
 	"dianping/internal/module/blog"
 	"dianping/internal/module/follow"
 	"dianping/internal/module/seckillvoucher"
@@ -16,6 +17,7 @@ import (
 	"dianping/internal/module/voucher"
 	"dianping/internal/module/voucherorder"
 	"dianping/internal/router"
+	"dianping/internal/session"
 	"dianping/internal/tx"
 	"dianping/pkg/idgen"
 	"dianping/pkg/validator"
@@ -102,6 +104,13 @@ func (a *App) Start() error {
 		readRuntime,
 	)
 
+	cfg := session.DefaultConfig()
+	sessionStore, err := session.NewStore(a.rdb, cfg)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	authMiddleware := middleware.AuthMiddleware(sessionStore, nil)
+
 	userInfoRepo := userinfo.NewRepository(a.db)
 	userInfoSrv := userinfo.NewService(userInfoRepo)
 
@@ -150,6 +159,7 @@ func (a *App) Start() error {
 		uploadHandler,
 		followHandler,
 		blogHandler,
+		authMiddleware,
 	)
 
 	server := &http.Server{

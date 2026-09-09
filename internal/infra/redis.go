@@ -23,11 +23,12 @@ func InitRedis(cfg config.RedisConfig) (*redis.Client, error) {
 		ConnMaxLifetime: time.Duration(cfg.ConnMaxLifetime) * time.Second,
 		ConnMaxIdleTime: time.Duration(cfg.ConnMaxIdleTime) * time.Second,
 
-		DialTimeout:  time.Duration(cfg.DialTimeout) * time.Second,
-		ReadTimeout:  time.Duration(cfg.ReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second,
-		PoolTimeout:  time.Duration(cfg.PoolTimeout) * time.Second,
-		MaxRetries:   cfg.MaxRetries,
+		DialTimeout:           time.Duration(cfg.DialTimeout) * time.Second,
+		ReadTimeout:           time.Duration(cfg.ReadTimeout) * time.Second,
+		WriteTimeout:          time.Duration(cfg.WriteTimeout) * time.Second,
+		PoolTimeout:           time.Duration(cfg.PoolTimeout) * time.Second,
+		ContextTimeoutEnabled: true,
+		MaxRetries:            cfg.MaxRetries,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

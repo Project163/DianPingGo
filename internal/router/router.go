@@ -27,6 +27,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 	uploadHandler *upload.Handler,
 	followHandler *follow.Handler,
 	blogHandler *blog.Handler,
+	authMiddleware gin.HandlerFunc,
 ) *gin.Engine {
 	if mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -94,7 +95,7 @@ func NewRouter(mode string, db *gorm.DB, rdb redis.Cmdable,
 		}
 
 		auth := api.Group("")
-		auth.Use(middleware.AuthMiddleware(rdb))
+		auth.Use(authMiddleware)
 		{
 			auth.POST("/voucher-order/seckill/:voucher_id", voucherOrderHandler.SeckillVoucher)
 			auth.GET("/voucher-order/:voucher_id", voucherOrderHandler.GetVoucherOrderByID)
