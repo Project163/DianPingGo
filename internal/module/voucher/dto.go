@@ -31,3 +31,8 @@ type VoucherResp struct {
 	BeginTime   time.Time `json:"begin_time"`
 	EndTime     time.Time `json:"end_time"`
 }
+
+type CreateSeckillVoucherResp struct {
+	VoucherID     uint64 `json:"voucher_id"`
+	PrepareStatus uint8  `json:"prepare_status"`
+}

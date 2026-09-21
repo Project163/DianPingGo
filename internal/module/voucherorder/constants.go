@@ -10,6 +10,10 @@ const (
 	SeckillSuccess       = 0 // 秒杀成功
 	SeckillNoStock       = 1 // 秒杀失败，库存不足
 	SeckillRepeatedOrder = 2 // 秒杀失败，重复下单
+	SeckillNotReady      = 3
+	SeckillNotStarted    = 4
+	SeckillEnded         = 5
+	SeckillDataError     = 6
 
 	MaxRetries       = 3                    // 最大重试次数
 	RetryKey         = "stream:order:retry" // 重试计数的Redis key

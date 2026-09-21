@@ -6,6 +6,7 @@ import (
 	"dianping/internal/module/seckillvoucher"
 	"dianping/pkg/errmsg"
 	"fmt"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -15,7 +16,7 @@ type VoucherRepository interface {
 	CreateVoucher(ctx context.Context, voucher *Voucher) error
 	GetVoucherByID(ctx context.Context, id uint64) (*Voucher, error)
 	GetByShopID(ctx context.Context, shopID uint64) ([]Voucher, error)
-	CreateSeckillVoucher(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error
+	CreateSeckillVoucher(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error
 }
 
 // Service 提供优惠券相关的业务逻辑
@@ -43,22 +44,44 @@ func (s *Service) CreateVoucher(ctx context.Context, voucher *Voucher) (uint64, 
 }
 
 // CreateSeckillVoucher 创建秒杀券
-func (s *Service) CreateSeckillVoucher(ctx context.Context, svoucher *Voucher) (uint64, error) {
-	err := s.repo.CreateSeckillVoucher(ctx, svoucher, &seckillvoucher.SeckillVoucher{
-		VoucherID: svoucher.ID,
-		Stock:     svoucher.Stock,
-		BeginTime: svoucher.BeginTime,
-		EndTime:   svoucher.EndTime,
-	})
-	if err != nil {
-		return 0, err
+func (s *Service) CreateSeckillVoucher(ctx context.Context, svoucher *Voucher) (uint64, uint8, error) {
+	if svoucher == nil {
+		return 0, seckillvoucher.PreparePending, &errmsg.ErrInvalidParam
 	}
-	stockKey := fmt.Sprintf("%s%d", SeckillStockKey, svoucher.ID)
 
-	if err := s.rdb.Set(ctx, stockKey, svoucher.Stock, 0).Err(); err != nil {
-		return 0, err
+	begin := svoucher.BeginTime.Truncate(time.Second)
+	end := svoucher.EndTime.Truncate(time.Second)
+
+	if svoucher.Stock == 0 || uint64(svoucher.Stock) > 2147483647 || !begin.After(time.Now()) || !end.After(time.Now()) {
+		return 0, seckillvoucher.PreparePending, errmsg.NewError(
+			errmsg.ErrInvalidParam,
+			fmt.Errorf("stock out of range or time error"),
+		)
 	}
-	return svoucher.ID, nil
+
+	svoucher.Type = 1
+	svoucher.BeginTime = begin
+	svoucher.EndTime = end
+
+	sv := &seckillvoucher.SeckillVoucher{
+		Stock:         svoucher.Stock,
+		PrepareStatus: seckillvoucher.PreparePending,
+		BeginTime:     begin,
+		EndTime:       end,
+	}
+	task := &seckillvoucher.SeckillInit{
+		Status:       seckillvoucher.InitTaskPending,
+		NextRetryAt:  time.Now(),
+		InitialStock: uint32(svoucher.Stock),
+		BeginTime:    begin,
+		EndTime:      end,
+	}
+
+	if err := s.repo.CreateSeckillVoucher(ctx, svoucher, sv, task); err != nil {
+		return 0, seckillvoucher.PreparePending,
+			errmsg.NewError(errmsg.ErrInternalSec, err)
+	}
+	return svoucher.ID, seckillvoucher.PreparePending, nil
 }
 
 // GetVoucherByShopID 根据商户ID查询优惠券列表

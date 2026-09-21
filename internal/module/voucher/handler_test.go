@@ -22,7 +22,7 @@ import (
 // mockVoucherRepoForHandler is a mock for VoucherRepository used in handler tests.
 type mockVoucherRepoForHandler struct {
 	createVoucherFunc        func(ctx context.Context, voucher *Voucher) error
-	createSeckillVoucherFunc func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error
+	createSeckillVoucherFunc func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error
 	getVoucherByIDFunc       func(ctx context.Context, id uint64) (*Voucher, error)
 	getByShopIDFunc          func(ctx context.Context, shopID uint64) ([]Voucher, error)
 }
@@ -34,9 +34,9 @@ func (m *mockVoucherRepoForHandler) CreateVoucher(ctx context.Context, voucher *
 	return nil
 }
 
-func (m *mockVoucherRepoForHandler) CreateSeckillVoucher(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
+func (m *mockVoucherRepoForHandler) CreateSeckillVoucher(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error {
 	if m.createSeckillVoucherFunc != nil {
-		return m.createSeckillVoucherFunc(ctx, v, sv)
+		return m.createSeckillVoucherFunc(ctx, v, sv, svi)
 	}
 	return nil
 }
@@ -183,7 +183,7 @@ func TestHandler_CreateVoucher(t *testing.T) {
 func TestHandler_CreateSeckillVoucher(t *testing.T) {
 	t.Run("create seckill voucher successfully", func(t *testing.T) {
 		r, repo, _ := setUpVoucherHandler(t)
-		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
+		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error {
 			v.ID = 20
 			return nil
 		}
@@ -214,7 +214,7 @@ func TestHandler_CreateSeckillVoucher(t *testing.T) {
 
 	t.Run("create seckill voucher with invalid params", func(t *testing.T) {
 		r, repo, _ := setUpVoucherHandler(t)
-		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
+		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error {
 			t.Fatalf("service should not be called when binding fails")
 			return nil
 		}
@@ -233,7 +233,7 @@ func TestHandler_CreateSeckillVoucher(t *testing.T) {
 
 	t.Run("create seckill voucher with service error", func(t *testing.T) {
 		r, repo, _ := setUpVoucherHandler(t)
-		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
+		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error {
 			return &errmsg.ErrInternalSec
 		}
 

@@ -21,7 +21,7 @@ type mockVoucherRepo struct {
 	createVoucherFunc        func(ctx context.Context, voucher *Voucher) error
 	getVoucherByIDFunc       func(ctx context.Context, id uint64) (*Voucher, error)
 	getByShopIDFunc          func(ctx context.Context, shopID uint64) ([]Voucher, error)
-	createSeckillVoucherFunc func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error
+	createSeckillVoucherFunc func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error
 }
 
 func (m *mockVoucherRepo) CreateVoucher(ctx context.Context, voucher *Voucher) error {
@@ -45,9 +45,9 @@ func (m *mockVoucherRepo) GetByShopID(ctx context.Context, shopID uint64) ([]Vou
 	return nil, nil
 }
 
-func (m *mockVoucherRepo) CreateSeckillVoucher(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
+func (m *mockVoucherRepo) CreateSeckillVoucher(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error {
 	if m.createSeckillVoucherFunc != nil {
-		return m.createSeckillVoucherFunc(ctx, v, sv)
+		return m.createSeckillVoucherFunc(ctx, v, sv, svi)
 	}
 	return nil
 }
@@ -130,7 +130,7 @@ func TestService_CreateSeckillVoucher(t *testing.T) {
 		svc, repo, mr := setUpVoucherService(t)
 		ctx := context.Background()
 
-		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
+		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error {
 			v.ID = 200
 			require.Equal(t, uint(1), v.Type)
 			require.Equal(t, uint(30), v.Stock)
@@ -160,7 +160,7 @@ func TestService_CreateSeckillVoucher(t *testing.T) {
 		svc, repo, _ := setUpVoucherService(t)
 		ctx := context.Background()
 
-		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher) error {
+		repo.createSeckillVoucherFunc = func(ctx context.Context, v *Voucher, sv *seckillvoucher.SeckillVoucher, svi *seckillvoucher.SeckillInit) error {
 			return errors.New("tx rollback")
 		}
 

@@ -79,4 +79,19 @@ var (
 
 	// 优惠券模块错误
 	ErrVoucherNotFound = CustomError{HttpCode: http.StatusNotFound, BusinessCode: 4801, Message: "优惠券不存在"}
+	ErrSeckillNotReady = CustomError{
+		HttpCode:     http.StatusServiceUnavailable,
+		BusinessCode: 4304,
+		Message:      "活动尚未准备就绪，请稍后重试",
+	}
+	ErrSeckillNotStarted = CustomError{
+		HttpCode:     http.StatusBadRequest,
+		BusinessCode: 4305,
+		Message:      "活动尚未开始",
+	}
+	ErrSeckillEnded = CustomError{
+		HttpCode:     http.StatusBadRequest,
+		BusinessCode: 4306,
+		Message:      "活动已经结束",
+	}
 )

@@ -12,7 +12,7 @@ import (
 // VoucherHandlerService defines the interface that the Handler depends on.
 type VoucherHandlerService interface {
 	CreateVoucher(ctx context.Context, voucher *Voucher) (uint64, error)
-	CreateSeckillVoucher(ctx context.Context, svoucher *Voucher) (uint64, error)
+	CreateSeckillVoucher(ctx context.Context, svoucher *Voucher) (uint64, uint8, error)
 	GetVoucherByID(ctx context.Context, id uint64) (*VoucherResp, error)
 	GetVoucherByShopID(ctx context.Context, shopID uint64) ([]VoucherResp, error)
 }
@@ -73,12 +73,15 @@ func (h *Handler) CreateSeckillVoucher(ctx *gin.Context) {
 		BeginTime:   req.BeginTime,
 		EndTime:     req.EndTime,
 	}
-	id, err := h.srv.CreateSeckillVoucher(ctx.Request.Context(), voucher)
+	id, status, err := h.srv.CreateSeckillVoucher(ctx.Request.Context(), voucher)
 	if err != nil {
 		response.Fail(ctx, err)
 		return
 	}
-	response.OK(ctx, id)
+	response.OK(ctx, CreateSeckillVoucherResp{
+		VoucherID:     id,
+		PrepareStatus: status,
+	})
 }
 
 func (h *Handler) GetVoucherByID(ctx *gin.Context) {

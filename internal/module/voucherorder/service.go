@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,29 +34,74 @@ type SeckillVoucherRepository interface {
 // 如果库存不足，返回1表示库存不足
 // 如果库存足够，扣减库存，SADD用户ID到订单集合中，XADD消息到Stream中，返回0表示下单成功
 var SeckillLuaScript = redis.NewScript(`
+local activityKey = KEYS[1]
+local orderKey = KEYS[2]
+local streamKey = KEYS[3]
+
 local voucherId = ARGV[1]
 local userId = ARGV[2]
 local orderId = ARGV[3]
 
-local stockKey = 'seckill:stock:' .. voucherId
-local orderKey = 'seckill:order:' .. voucherId .. ':' .. userId
-local streamKey = 'stream:orders'
+if redis.call('TYPE', activityKey).ok ~= 'hash' then
+    return 3
+end
 
-local exists = redis.call('SISMEMBER', orderKey, userId)
-if exists == 1 then
+local data = redis.call('HMGET', activityKey,
+    'state', 'begin_ms', 'end_ms', 'stock',
+    'init_token', 'initial_stock')
+
+local beginMs = tonumber(data[2])
+local endMs = tonumber(data[3])
+local stock = tonumber(data[4])
+local initial = tonumber(data[6])
+
+if data[1] ~= 'READY'
+    or not data[5] or data[5] == ''
+    or not beginMs or not endMs or endMs <= beginMs
+    or not initial or initial <= 0
+    or not stock or stock < 0 or stock > initial
+    or stock ~= math.floor(stock) then
+    return 3
+end
+
+local t = redis.call('TIME')
+local nowMs = tonumber(t[1]) * 1000
+    + math.floor(tonumber(t[2]) / 1000)
+
+if nowMs < beginMs then
+    return 4
+end
+
+if nowMs >= endMs then
+    return 5
+end
+
+-- 在任何写入前检查类型，避免可预见的 WRONGTYPE 部分写入。
+local orderType = redis.call('TYPE', orderKey).ok
+local streamType = redis.call('TYPE', streamKey).ok
+
+if orderType ~= 'none' and orderType ~= 'set' then
+    return 6
+end
+
+if streamType ~= 'none' and streamType ~= 'stream' then
+    return 6
+end
+
+if redis.call('SISMEMBER', orderKey, userId) == 1 then
     return 2
 end
 
-local stock = redis.call('GET', stockKey)
-if not stock or tonumber(stock) <= 0 then
+if stock <= 0 then
     return 1
 end
 
-redis.call('DECRBY', stockKey, 1)
-
+redis.call('HINCRBY', activityKey, 'stock', -1)
 redis.call('SADD', orderKey, userId)
-
-redis.call('XADD', streamKey, '*', 'user_id', userId, 'voucher_id', voucherId, 'order_id', orderId)
+redis.call('XADD', streamKey, '*',
+    'user_id', userId,
+    'voucher_id', voucherId,
+    'order_id', orderId)
 
 return 0
 `)
@@ -102,14 +148,17 @@ func (s *Service) Start() {
 	if s.started {
 		return
 	}
-	s.started = true
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
 	// 在服务启动时创建消费者组，组键为 StreamOrderKey，组名为 StreamGroupName，起始ID为 "0"
 	if err := s.rdb.XGroupCreateMkStream(context.Background(), StreamOrderKey, StreamGroupName, "0").Err(); err != nil {
-		log.Printf("创建消费者组失败：%v", err)
-		return
+		if !strings.HasPrefix(err.Error(), "BUSYGROUP") {
+			log.Printf("创建消费者组失败：%v", err)
+			return
+		}
 	}
+
+	s.started = true
 
 	go s.consumeNewMessages()
 	go s.consumePendingMessages()
@@ -128,28 +177,51 @@ func (s *Service) Stop() {
 }
 
 // SeckillVoucher 处理秒杀优惠券请求，接受优惠券ID和用户ID作为参数，调用Lua脚本进行秒杀逻辑，并返回订单ID或错误
-func (s *Service) SeckillVoucher(ctx context.Context, voucherID uint64, userID uint64) (int64, error) {
-	// 用随机ID生成器生成一个唯一的订单ID，作为订单的标识
+func (s *Service) SeckillVoucher(
+	ctx context.Context,
+	voucherID uint64,
+	userID uint64,
+) (int64, error) {
+	if voucherID == 0 || userID == 0 {
+		return 0, &errmsg.ErrInvalidParam
+	}
+
 	orderID, err := s.idWorker.NextID(ctx, "order")
 	if err != nil {
-		return 0, err
+		return 0, errmsg.NewError(errmsg.ErrInternalSec, err)
 	}
-	// 用Lua脚本来处理秒杀逻辑，会返回一个整数表示结果，0表示成功，1表示库存不足，2表示重复下单
-	// Lua本身控制的是缓存，通过XADD传递消息到数据库
-	// 数据库的订单处理逻辑在StreamConsumer中异步处理
-	res, err := SeckillLuaScript.Run(ctx, s.rdb, []string{}, voucherID, userID, orderID).Int()
 
+	voucherText := strconv.FormatUint(voucherID, 10)
+	userText := strconv.FormatUint(userID, 10)
+
+	keys := []string{
+		seckillvoucher.ActivityKey(voucherID),
+		"seckill:order:" + voucherText + ":" + userText,
+		StreamOrderKey,
+	}
+
+	result, err := SeckillLuaScript.Run(
+		ctx, s.rdb, keys, voucherID, userID, orderID,
+	).Int()
 	if err != nil {
-		return 0, err
+		return 0, errmsg.NewError(errmsg.ErrInternalSec, err)
 	}
 
-	switch res {
+	switch result {
 	case SeckillSuccess:
 		return orderID, nil
 	case SeckillNoStock:
 		return 0, &errmsg.ErrNoStock
 	case SeckillRepeatedOrder:
 		return 0, &errmsg.ErrRepeatedOrder
+	case SeckillNotReady:
+		return 0, &errmsg.ErrSeckillNotReady
+	case SeckillNotStarted:
+		return 0, &errmsg.ErrSeckillNotStarted
+	case SeckillEnded:
+		return 0, &errmsg.ErrSeckillEnded
+	case SeckillDataError:
+		return 0, &errmsg.ErrInternalSec
 	default:
 		return 0, &errmsg.ErrInternalSec
 	}

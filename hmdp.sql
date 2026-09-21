@@ -88,6 +88,7 @@ DROP TABLE IF EXISTS `tb_seckill_voucher`;
 CREATE TABLE `tb_seckill_voucher`  (
   `voucher_id` bigint(20) UNSIGNED NOT NULL COMMENT '关联的优惠券的id',
   `stock` int(8) NOT NULL COMMENT '库存',
+  `prepare_status` TINYINT UNSIGNED NOT NULL DEFAULT 0,
   `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `begin_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '生效时间',
   `end_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '失效时间',
@@ -97,6 +98,37 @@ CREATE TABLE `tb_seckill_voucher`  (
 
 -- ----------------------------
 -- Records of tb_seckill_voucher
+-- ----------------------------
+
+-- ----------------------------
+-- Table structure for tb_seckill_init_task
+-- ----------------------------
+DROP TABLE IF EXISTS `tb_seckill_init_task`;
+CREATE TABLE `tb_seckill_init_task` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '初始化任务ID',
+    `voucher_id` BIGINT UNSIGNED NOT NULL COMMENT '关联秒杀券ID，每张券只创建一个初始化任务',
+    `status` TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '任务状态：0等待执行，1执行中，2执行完成，3确定失败',
+    `attempts` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '领取执行次数，包含首次执行',
+    `next_retry_at` DATETIME(3) NOT NULL COMMENT '下次允许领取的时间，首次设为创建时间',
+    `lease_until` DATETIME(3) NULL DEFAULT NULL COMMENT '领取租约截止时间，未领取时为空',
+    `claim_token` VARCHAR(36) NOT NULL DEFAULT '' COMMENT '本次领取令牌，每次领取重新生成',
+    `last_error` VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '最近一次错误摘要',
+    `initial_stock` INT UNSIGNED NOT NULL COMMENT '初始化库存快照，重试期间不可修改',
+    `begin_time` DATETIME(3) NOT NULL COMMENT '活动开始时间快照',
+    `end_time` DATETIME(3) NOT NULL COMMENT '活动结束时间快照',
+    `create_time` DATETIME(3) NOT NULL COMMENT '创建时间，由应用写入',
+    `update_time` DATETIME(3) NOT NULL COMMENT '更新时间，由应用写入',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_seckill_init_voucher` (`voucher_id`),
+    KEY `idx_seckill_init_pending` (`status`, `next_retry_at`),
+    KEY `idx_seckill_init_processing` (`status`, `lease_until`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_general_ci
+  COMMENT='秒杀券Redis初始化任务';
+
+-- ----------------------------
+-- Records of tb_seckill_init_task
 -- ----------------------------
 
 -- ----------------------------
@@ -1274,7 +1306,8 @@ CREATE TABLE `tb_voucher_order`  (
   `use_time` timestamp NULL DEFAULT NULL COMMENT '核销时间',
   `refund_time` timestamp NULL DEFAULT NULL COMMENT '退款时间',
   `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  PRIMARY KEY (`id`) USING BTREE
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE(`user_id`, `voucher_id`)
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
 
 -- ----------------------------

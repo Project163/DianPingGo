@@ -65,6 +65,8 @@ func NewApp(configPath string) (*App, error) {
 
 // Start 启动HTTP服务器，监听指定端口，并处理系统中断信号以关闭服务器
 func (a *App) Start() error {
+	defer infra.CloseMySQL()
+	defer infra.CloseRedis()
 	validator.InitValidator()
 	txManager := tx.NewGormManager(a.db)
 	refreshPool := cache.NewRefreshPool(
@@ -147,6 +149,29 @@ func (a *App) Start() error {
 	blogHandler := blog.NewHandler(blogSrv)
 
 	a.voucherOrderSrv.Start()
+	initTaskRepo := seckillvoucher.NewInitTaskRepository(a.db)
+	initService := seckillvoucher.NewInitService(
+		initTaskRepo,
+		seckillVoucherRepo,
+		a.rdb,
+		txManager,
+		logger,
+	)
+	initWorker := seckillvoucher.NewInitWorker(initService, logger)
+
+	initCtx, stopInit := context.WithCancel(context.Background())
+	initDone := make(chan struct{})
+
+	go func() {
+		defer close(initDone)
+		initWorker.Run(initCtx)
+	}()
+
+	// 注册晚于数据库/Redis的关闭 defer，所以执行更早。
+	defer func() {
+		stopInit()
+		<-initDone
+	}()
 
 	r := router.NewRouter(
 		a.cfg.Server.Mode,
@@ -167,35 +192,51 @@ func (a *App) Start() error {
 		Handler: r,
 	}
 
+	serverErr := make(chan error, 1)
 	go func() {
 		log.Printf("服务器正在监听端口 %d...", a.cfg.Server.Port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("服务器启动失败：%v", err)
-		}
+		serverErr <- server.ListenAndServe()
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Println("收到中断信号，正在关闭服务器...")
+	defer signal.Stop(quit)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	var runErr error
+
+	select {
+	case <-quit:
+		log.Println("收到关闭信号")
+	case err := <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			runErr = err
+		}
+	}
+
+	// 停止初始化任务的后续领取。
+	// 等待退出由上面注册的 defer 完成。
+	stopInit()
+
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(), 5*time.Second,
+	)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("服务器关闭失败：%v", err)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP 优雅关闭失败：%v", err)
+		_ = server.Close()
+		if runErr == nil {
+			runErr = err
+		}
 	}
+
 	refreshPool.Shutdown()
-	log.Println("服务器已成功关闭")
 
 	if a.voucherOrderSrv != nil {
 		a.voucherOrderSrv.Stop()
 	}
 
-	defer infra.CloseMySQL()
-	defer infra.CloseRedis()
-
-	return nil
+	return runErr
 }
 
 // TODO: 对象生命周期管理

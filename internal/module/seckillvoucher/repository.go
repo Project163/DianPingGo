@@ -40,6 +40,21 @@ func (r *Repository) GetSeckillVoucherByID(ctx context.Context, voucherID uint64
 	return &sv, nil
 }
 
+func (r *Repository) SetPrepareStatus(
+	ctx context.Context,
+	voucherID uint64,
+	status uint8,
+) (bool, error) {
+	result := r.getDB(ctx).Model(&SeckillVoucher{}).
+		Where(
+			"voucher_id = ? AND prepare_status = ?",
+			voucherID, PreparePending,
+		).
+		Update("prepare_status", status)
+
+	return result.RowsAffected == 1, result.Error
+}
+
 // InnoDB行锁来避免超卖问题，只有当stock > 0时才会扣减库存
 // 教程中教学了使用乐观锁来避免超卖问题，但UPDATE的语句在MySQL中默认是使用行锁的
 // 所以修改库存的操作默认是串行的线程安全的，使用乐观锁反而会增加额外的开销
